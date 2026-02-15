@@ -1,0 +1,5 @@
+celery==5.3.6
+redis==5.0.1
+docker==7.0.0
+python-dotenv==1.0.1
+pydantic==2.6.1

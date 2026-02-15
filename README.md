@@ -1,5 +1,8 @@
 # RedTailFox Orchestrator 🦊
 
+> Легковесный одноузловой механизм оркестрации для изоляции рабочих процессов на основе Docker.
+
+> Разработан для инженеров, которым необходим контроль над контейнерами без сложностей Kubernetes.
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.9%2B-blue" alt="Python">
   <img src="https://img.shields.io/badge/Docker-required-blue" alt="Docker">
@@ -14,11 +17,26 @@
 </p>
 
 <p align="center">
-  <i>Kubernetes — для космоса. RedTailFox — для вашего сервера.</i><br>
-  <i>Kubernetes is for space. RedTailFox is for your server.</i>
+  <i>RedTailFox — для вашего сервера.</i><br>
+  <i>RedTailFox is for your server.</i>
 </p>
 
 ---
+## 🎯 Why?
+
+Modern orchestration solutions like Kubernetes are powerful — but often overkill for single-node infrastructure or lightweight workloads.
+
+Celery handles task queues well, but does not manage Docker containers.
+
+RedTailFox fills the gap between:
+- Simple task queues
+- Full-scale Kubernetes clusters
+
+It is designed for:
+- Large numbers of isolated worker processes
+- Account- or tenant-based job separation
+- Self-healing infrastructure without DevOps overhead
+- Single-server or small-cluster deployments
 
 ## 🎯 Зачем это?
 
@@ -51,7 +69,7 @@
 ```mermaid
 graph TD
     %% Входные данные
-    A["📥 ЗАДАЧА В REDIS<br/><b>autoreply_queue</b>"] --> B["⚙️ МЕНЕДЖЕР<br/><i>manager.py</b>"]
+    A["📥 ЗАДАЧА В REDIS<br/><b>manager_tasks</b>"] --> B["⚙️ МЕНЕДЖЕР<br/><i>manager.py</b>"]
     
     %% Принятие решения
     B --> C{"🔍 ЕСТЬ СВОБОДНЫЙ<br/>СЛОТ В КОНТЕЙНЕРЕ?"}
@@ -76,7 +94,7 @@ graph TD
     
     %% Проверки монитора
     J --> K{"⏳ СЛОТ<br/>НЕАКТИВЕН >600с?"}
-    K -->|ДА| L["🔄 КОМАНДА <b>restart_slot</b><br/>в autoreply_queue"]
+    K -->|ДА| L["🔄 КОМАНДА <b>restart_worker</b><br/>в autoreply_queue"]
     
     J --> M{"🔇 КОНТЕЙНЕР<br/>БЕЗ HEARTBEAT >500с?"}
     M -->|ДА| N["🚨 КОМАНДА <b>restart_container</b><br/>в autoreply_queue"]
@@ -122,8 +140,8 @@ graph TD
 
 | Компонент | Что делает | Где лежит |
 |-----------|------------|-----------|
-| **Менеджер** | Распределяет задачи, управляет контейнерами, хранит состояние в Redis | `manager/main.py` |
-| **Воркер** | Живет в Docker, запускает слоты, шлет heartbeat | `worker/main.py` |
+| **Менеджер** | Распределяет задачи, управляет контейнерами, хранит состояние в Redis | `manager/manager.py` |
+| **Воркер** | Живет в Docker, запускает слоты, шлет heartbeat | `worker/worker.py` |
 | **Монитор** | Следит за здоровьем, инициирует рестарты | `monitor/monitor.py` |
 | **HeadBear** | Собирает метрики по слотам и контейнерам | `worker/heartbeat.py` |
 
@@ -175,14 +193,14 @@ task = {
     "command": "start",
     "slot_id": 1,
     "config": {
-        "bot": {
-            "username": "my_bot",
-            "check_interval": 300
+        "job": {
+            "name": "demo_worker",
+            "interval": 300
         }
     }
 }
 
-r.lpush("autoreply_queue", json.dumps(task))
+r.lpush("manager_tasks", json.dumps(task))
 print("Задача отправлена!")
 ```
 
@@ -216,20 +234,44 @@ print("Задача отправлена!")
 
 ---
 
-## 🧪 Реальный пример: Instagram-автоответчик на 1000+ воркеров
+## 🧪 Пример использования: Обработка заданий в нескольких учетных записях
 
-Мы используем RedTailFox как ядро для коммерческого продукта — автоответчика в Instagram.
+Каждый слот представляет собой изолированный контекст задания.
 
-**Как это работает:**
-- Каждый слот = отдельный Instagram-аккаунт
-- Слот проверяет входящие, отвечает по настроенным шаблонам
-- HeadBear собирает метрики по каждому аккаунту
-- Монитор следит, чтобы все работало 24/7
-- При падении аккаунта/контейнера — автоперезапуск
+Примеры:
+- Веб-скрейперы
+- API-клиенты
+- Торговые боты
+- Фоновые обработчики данных
+- Рабочие процессы SaaS-клиентов
 
-**Результат:** один сервер держит 1000+ одновременных воркеров без Kubernetes.
+RedTailFox предоставляет:
+- Автоматическое масштабирование контейнеров
+- Изоляцию для каждого задания
+- Самовосстановление в случае сбоя
+- Непрерывный мониторинг
 
-[Подробнее в примере →](./examples/instagram_autoreply)
+В ходе производственных тестов один сервер обработал более 1000 изолированных рабочих процессов без Kubernetes.
+
+## 🧪 Example Use Case: Multi-Account Job Processing
+
+Each slot represents an isolated job context.
+
+Examples:
+- Web scrapers
+- API clients
+- Trading bots
+- Background data processors
+- SaaS tenant workers
+
+RedTailFox ensures:
+- Automatic container scaling
+- Per-job isolation
+- Self-recovery on crash
+- Continuous monitoring
+
+In production tests, a single server handled 1000+ isolated workers without Kubernetes.
+
 
 ---
 
@@ -252,11 +294,10 @@ print("Задача отправлена!")
 ## 🧩 Структура проекта
 
 ```
-redtailfox-orchestrator/
+RedTailFox/
 ├── manager/          # Менеджер (распределение задач)
 ├── worker/           # Воркер (исполнение, heartbeat)
 ├── monitor/          # Монитор (автовосстановление)
-├── common/           # Общие модули (redis, константы)
 ├── docs/             # Документация
 ├── examples/         # Примеры использования
 ├── .env.example      # Шаблон конфига
@@ -273,20 +314,20 @@ redtailfox-orchestrator/
 - Поддержкой большего количества хостов (сейчас только одна нода)
 - Метриками в Prometheus
 
-Смотри [CONTRIBUTING.md](docs/CONTRIBUTING.md) и смело создавай issue/pull request.
 
 ---
 
 ## 📄 Лицензия
 
 MIT © 2025 RedTailFox Team
+MIT © 2025 RTF Labs Team
 
 ---
 
 ## 📞 Контакты
 
 - Telegram: [@rtf_labs](https://t.me/rtf_labs)
-- GitHub: [github.com/yourname/redtailfox-orchestrator](https://github.com/yourname/redtailfox-orchestrator)
+- GitHub: [github.com/Dark-F0X/RedTailFox](https://github.com/Dark-F0X/RedTailFox)
 
 ---
 
