@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	tickInterval    = 5 * time.Second
-	errorBackoff    = 30 * time.Second
+	tickInterval = 5 * time.Second
+	errorBackoff = 30 * time.Second
+	// defaultInterval is the fallback work-check period (in seconds) when the
+	// slot config does not specify a checkInterval. 900s (15 min) is the
+	// standard polling cadence for the upstream chat-bot use case.
 	defaultInterval = 900
 	stopTimeout     = 30 * time.Second
 )

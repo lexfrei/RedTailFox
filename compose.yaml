@@ -15,15 +15,27 @@ services:
       timeout: 3s
       retries: 5
 
+  # docker-socket-proxy restricts Docker API access so the manager can only
+  # manage containers without full daemon control. Disable in development
+  # by removing this service and mounting the socket directly into manager.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - foxnet
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: "1"
+      POST: "1"
+
   manager:
     build:
       context: .
       dockerfile: Containerfile
     command: ["/redtailfox", "manager"]
-    # Manager needs access to the container runtime socket to spawn workers.
-    # For hardened deployments, consider running a docker-socket-proxy
-    # (e.g. tecnativa/docker-socket-proxy) to restrict API access.
-    user: "0:0"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -32,10 +44,13 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      socket-proxy:
+        condition: service_started
     # NOTE: For production, set REDIS_PASSWORD or mount REDIS_PASSWORD_FILE
     # to secure the Redis connection. The manager propagates credentials to
     # worker containers automatically.
     environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       # REDIS_PASSWORD: ""
@@ -45,8 +60,6 @@ services:
       WORKER_NETWORK: "foxnet"
       MAX_SLOTS_PER_CONTAINER: "10"
       WORKER_TASKS_LIST: "manager_tasks"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
 
   monitor:
     build:

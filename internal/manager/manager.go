@@ -24,6 +24,9 @@ const (
 	syncInterval             = 30 * time.Second
 	containerStopTimeout     = 10 * time.Second
 	containerShutdownTimeout = 30 * time.Second
+	// maxConfigSize limits the size of slot configuration JSON to prevent OOM
+	// from oversized payloads pushed through the Redis task queue.
+	maxConfigSize = 1 << 20 // 1 MiB.
 )
 
 // Config holds manager-specific settings.
@@ -134,6 +137,8 @@ func (m *Manager) taskLoop(ctx context.Context) {
 					return
 				}
 
+				// BRPop normally returns context errors on timeout, but some
+				// Redis client versions may return redis.Nil instead.
 				if errors.Is(err, redis.Nil) {
 					continue
 				}
@@ -309,6 +314,11 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 }
 
 func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.RawMessage) (json.RawMessage, error) {
+	if len(config) > maxConfigSize {
+		return nil, errors.Wrapf(errdefs.ErrInvalidConfig,
+			"config for slot %d exceeds max size (%d > %d bytes)", slotID, len(config), maxConfigSize)
+	}
+
 	if len(config) > 0 && string(config) != "null" {
 		if !json.Valid(config) {
 			return nil, errors.Wrapf(errdefs.ErrInvalidConfig,
@@ -613,6 +623,10 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 		return
 	}
 
+	// NOTE: Stop+Remove execute while holding m.mu. This blocks all other
+	// manager operations for up to containerStopTimeout. An async cleanup
+	// queue would reduce contention but adds complexity; the current approach
+	// is acceptable because empty-container cleanup is infrequent.
 	m.log.Info("container empty, stopping", "container", containerName)
 
 	stopTimeout := containerStopTimeout
@@ -787,9 +801,9 @@ func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initia
 	}
 }
 
-// shutdownContainers stops and removes all tracked worker containers during
-// graceful shutdown. Uses a background context since the signal context is
-// already cancelled at this point.
+// shutdownContainers stops and removes all tracked worker containers
+// concurrently during graceful shutdown. Uses a background context since
+// the signal context is already cancelled at this point.
 func (m *Manager) shutdownContainers() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -810,17 +824,29 @@ func (m *Manager) shutdownContainers() {
 
 	m.log.Info("shutdown: stopping worker containers", "count", len(containers))
 
+	var wgr sync.WaitGroup
+
+	wgr.Add(len(containers))
+
 	for _, name := range containers {
-		if err := m.runtime.Stop(ctx, name, containerStopTimeout); err != nil {
-			m.log.Error("shutdown: failed to stop container", "container", name, "error", err)
-		}
+		go m.shutdownOneContainer(ctx, &wgr, name)
+	}
 
-		if err := m.runtime.Remove(ctx, name); err != nil {
-			m.log.Error("shutdown: failed to remove container", "container", name, "error", err)
-		}
+	wgr.Wait()
+}
 
-		if err := m.state.RemoveContainer(ctx, name); err != nil {
-			m.log.Error("shutdown: failed to clean container state", "container", name, "error", err)
-		}
+func (m *Manager) shutdownOneContainer(ctx context.Context, wgr *sync.WaitGroup, name string) {
+	defer wgr.Done()
+
+	if err := m.runtime.Stop(ctx, name, containerStopTimeout); err != nil {
+		m.log.Error("shutdown: failed to stop container", "container", name, "error", err)
+	}
+
+	if err := m.runtime.Remove(ctx, name); err != nil {
+		m.log.Error("shutdown: failed to remove container", "container", name, "error", err)
+	}
+
+	if err := m.state.RemoveContainer(ctx, name); err != nil {
+		m.log.Error("shutdown: failed to clean container state", "container", name, "error", err)
 	}
 }

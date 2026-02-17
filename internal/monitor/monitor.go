@@ -95,6 +95,10 @@ func (mon *Monitor) Run(ctx context.Context) {
 
 // Step performs a single health check cycle. Exported for testing.
 // Not safe for concurrent use — must be called from a single goroutine.
+//
+// NOTE: The active container set is read once and heartbeats are checked
+// individually. Containers added between SMembers and heartbeat reads
+// are missed until the next cycle — acceptable at a 10s interval.
 func (mon *Monitor) Step(ctx context.Context) {
 	containers := mon.activeContainerNames(ctx)
 	seen := mon.checkHeartbeats(ctx, containers)
