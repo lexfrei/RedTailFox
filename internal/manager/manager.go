@@ -504,8 +504,10 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 	// Remove all container state atomically (slot set, active membership,
 	// command channel, and orphaned slot-to-container mappings) BEFORE
 	// re-creating slots so PickContainer does not select the dead container.
+	// Abort if cleanup fails — creating new slots while the dead container
+	// remains in the active set would let PickContainer route them there.
 	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
-		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+		return errors.Wrapf(err, "removing state for dead container %s, aborting restart", containerName)
 	}
 
 	for _, sid := range slots {

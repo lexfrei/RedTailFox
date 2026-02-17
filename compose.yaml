@@ -21,6 +21,8 @@ services:
       dockerfile: Containerfile
     command: ["/redtailfox", "manager"]
     # Manager needs access to the container runtime socket to spawn workers.
+    # For hardened deployments, consider running a docker-socket-proxy
+    # (e.g. tecnativa/docker-socket-proxy) to restrict API access.
     user: "0:0"
     restart: unless-stopped
     security_opt:

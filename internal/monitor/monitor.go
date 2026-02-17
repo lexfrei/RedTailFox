@@ -356,19 +356,19 @@ func (mon *Monitor) sendTask(ctx context.Context, task *model.Task) {
 	}
 }
 
-// incrCounter atomically increments a Redis counter and refreshes its TTL.
+// incrCounter atomically increments a Redis counter and refreshes its TTL
+// using a pipeline so both operations are sent in a single round-trip.
 func (mon *Monitor) incrCounter(ctx context.Context, key string) (int, error) {
-	val, err := mon.rdb.Incr(ctx, key).Result()
+	pipe := mon.rdb.Pipeline()
+	incr := pipe.Incr(ctx, key)
+	pipe.Expire(ctx, key, counterTTL)
+
+	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return 0, errors.Wrap(err, "incrementing counter")
 	}
 
-	expErr := mon.rdb.Expire(ctx, key, counterTTL).Err()
-	if expErr != nil {
-		mon.log.Error("failed to set counter TTL", "key", key, "error", expErr)
-	}
-
-	return int(val), nil
+	return int(incr.Val()), nil
 }
 
 // getCounter reads a Redis counter value. Returns 0 for missing keys.

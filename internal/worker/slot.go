@@ -175,9 +175,16 @@ func (s *Slot) run(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	// Cancel context when stop signal arrives so WorkFunc can exit early.
+	// Cancel context when stop signal arrives or parent context ends
+	// so WorkFunc can exit early. Selecting on both channels prevents
+	// this goroutine from leaking when the parent context is cancelled
+	// without calling Stop().
 	go func() {
-		<-s.stopCh
+		select {
+		case <-s.stopCh:
+		case <-parent.Done():
+		}
+
 		cancel()
 	}()
 
