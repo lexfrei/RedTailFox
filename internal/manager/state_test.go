@@ -10,6 +10,8 @@ import (
 	"github.com/lexfrei/RedTailFox/internal/manager"
 )
 
+const testContainerName = "fox_worker_1"
+
 func setupRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 
@@ -24,15 +26,15 @@ func TestRegisterSlot(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
+	state.RegisterSlot(ctx, 1, testContainerName)
 
-	container, err := state.GetSlotContainer(ctx, 1)
+	ctr, err := state.GetSlotContainer(ctx, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if container != "fox_worker_1" {
-		t.Errorf("expected fox_worker_1, got %s", container)
+	if ctr != testContainerName {
+		t.Errorf("expected %s, got %s", testContainerName, ctr)
 	}
 }
 
@@ -41,15 +43,15 @@ func TestUnregisterSlot(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
-	containerName, err := state.UnregisterSlot(ctx, 1)
+	state.RegisterSlot(ctx, 1, testContainerName)
 
+	containerName, err := state.UnregisterSlot(ctx, 1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if containerName != "fox_worker_1" {
-		t.Errorf("expected fox_worker_1, got %s", containerName)
+	if containerName != testContainerName {
+		t.Errorf("expected %s, got %s", testContainerName, containerName)
 	}
 
 	// Verify slot is gone.
@@ -64,15 +66,15 @@ func TestPickContainer_HasFreeSlots(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 2)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
+	state.RegisterSlot(ctx, 1, testContainerName)
 
-	container, err := state.PickContainer(ctx)
+	ctr, err := state.PickContainer(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if container != "fox_worker_1" {
-		t.Errorf("expected fox_worker_1, got %s", container)
+	if ctr != testContainerName {
+		t.Errorf("expected %s, got %s", testContainerName, ctr)
 	}
 }
 
@@ -81,15 +83,15 @@ func TestPickContainer_AllFull(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 1)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
+	state.RegisterSlot(ctx, 1, testContainerName)
 
-	container, err := state.PickContainer(ctx)
+	ctr, err := state.PickContainer(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if container != "" {
-		t.Errorf("expected empty string when all full, got %s", container)
+	if ctr != "" {
+		t.Errorf("expected empty string when all full, got %s", ctr)
 	}
 }
 
@@ -150,10 +152,10 @@ func TestContainerSlotCount(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
-	state.RegisterSlot(ctx, 2, "fox_worker_1")
+	state.RegisterSlot(ctx, 1, testContainerName)
+	state.RegisterSlot(ctx, 2, testContainerName)
 
-	count, err := state.ContainerSlotCount(ctx, "fox_worker_1")
+	count, err := state.ContainerSlotCount(ctx, testContainerName)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -168,7 +170,7 @@ func TestActiveContainers(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
+	state.RegisterSlot(ctx, 1, testContainerName)
 	state.RegisterSlot(ctx, 2, "fox_worker_2")
 
 	active, err := state.ActiveContainers(ctx)
@@ -186,8 +188,8 @@ func TestRemoveContainer(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, "fox_worker_1")
-	state.RemoveContainer(ctx, "fox_worker_1")
+	state.RegisterSlot(ctx, 1, testContainerName)
+	state.RemoveContainer(ctx, testContainerName)
 
 	active, err := state.ActiveContainers(ctx)
 	if err != nil {

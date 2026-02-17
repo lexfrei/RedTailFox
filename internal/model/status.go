@@ -1,4 +1,4 @@
-package types
+package model
 
 // SlotStatus represents the current state of a worker slot.
 type SlotStatus string

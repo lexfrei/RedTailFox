@@ -1,5 +1,5 @@
-// Package types defines shared data structures used across all RedTailFox components.
-package types
+// Package model defines shared data structures used across all RedTailFox components.
+package model
 
 // Command represents a task command type.
 type Command string

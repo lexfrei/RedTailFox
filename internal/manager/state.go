@@ -9,7 +9,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
 
-	rtferrors "github.com/lexfrei/RedTailFox/internal/errors"
+	rtferrors "github.com/lexfrei/RedTailFox/internal/errdefs"
 )
 
 // Redis key constants for state management.

@@ -1,4 +1,4 @@
-package types
+package model
 
 // Heartbeat is the health check payload published by each worker container.
 type Heartbeat struct {
@@ -6,7 +6,7 @@ type Heartbeat struct {
 	Container string `json:"container"`
 
 	// Timestamp is the Unix epoch when this heartbeat was created.
-	Timestamp int64 `json:"ts"`
+	Timestamp int64 `json:"timestamp"`
 
 	// Slots contains the state of each slot in this container.
 	Slots []SlotHeartbeat `json:"slots"`
@@ -27,5 +27,5 @@ type SlotHeartbeat struct {
 	LastActive int64 `json:"lastActive"`
 
 	// Timestamp is the Unix epoch when this snapshot was taken.
-	Timestamp int64 `json:"ts"`
+	Timestamp int64 `json:"timestamp"`
 }

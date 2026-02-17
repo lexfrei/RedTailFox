@@ -1,5 +1,5 @@
-// Package errors defines sentinel errors for the RedTailFox orchestrator.
-package errors
+// Package errdefs defines sentinel errors for the RedTailFox orchestrator.
+package errdefs
 
 import "github.com/cockroachdb/errors"
 

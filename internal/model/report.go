@@ -1,4 +1,4 @@
-package types
+package model
 
 // WorkerReport is sent by a worker to the manager to report slot status changes.
 type WorkerReport struct {

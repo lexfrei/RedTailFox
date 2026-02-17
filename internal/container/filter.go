@@ -11,12 +11,12 @@ import (
 func filterByPrefix(containers []apitypes.Summary, prefix string) []Container {
 	result := make([]Container, 0, len(containers))
 
-	for _, ctr := range containers {
-		for _, name := range ctr.Names {
+	for idx := range containers {
+		for _, name := range containers[idx].Names {
 			cleaned := strings.TrimPrefix(name, "/")
 			if strings.HasPrefix(cleaned, prefix) {
 				result = append(result, Container{
-					ID:   ctr.ID,
+					ID:   containers[idx].ID,
 					Name: cleaned,
 				})
 

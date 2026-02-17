@@ -12,7 +12,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lexfrei/RedTailFox/internal/container"
-	"github.com/lexfrei/RedTailFox/internal/types"
+	"github.com/lexfrei/RedTailFox/internal/errdefs"
+	"github.com/lexfrei/RedTailFox/internal/model"
 )
 
 // Config holds manager-specific settings.
@@ -51,22 +52,22 @@ func New(rdb *redis.Client, runtime container.Runtime, cfg Config) *Manager {
 }
 
 // HandleTask dispatches a task to the appropriate handler.
-func (m *Manager) HandleTask(ctx context.Context, task types.Task) error {
+func (m *Manager) HandleTask(ctx context.Context, task model.Task) error {
 	switch task.Command {
-	case types.CommandStart, types.CommandRun, types.CommandStartWorker:
+	case model.CommandStart, model.CommandRun, model.CommandStartWorker:
 		return m.handleStart(ctx, task)
-	case types.CommandStop:
+	case model.CommandStop:
 		return m.handleStop(ctx, task)
-	case types.CommandRestartSlot:
+	case model.CommandRestartSlot:
 		return m.handleRestartSlot(ctx, task)
-	case types.CommandRestartContainer:
+	case model.CommandRestartContainer:
 		return m.handleRestartContainer(ctx, task)
 	default:
-		return errors.Newf("unknown command: %s", task.Command)
+		return errors.Wrapf(errdefs.ErrUnknownCommand, "command: %s", task.Command)
 	}
 }
 
-func (m *Manager) handleStart(ctx context.Context, task types.Task) error {
+func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 	config := task.Config
 
 	config, err := m.resolveConfig(ctx, task.SlotID, config)
@@ -87,8 +88,8 @@ func (m *Manager) handleStart(ctx context.Context, task types.Task) error {
 
 	m.state.RegisterSlot(ctx, task.SlotID, containerName)
 
-	return m.sendCommand(ctx, containerName, types.Task{
-		Command: types.CommandStart,
+	return m.sendCommand(ctx, containerName, model.Task{
+		Command: model.CommandStart,
 		SlotID:  task.SlotID,
 		Config:  config,
 	})
@@ -161,21 +162,22 @@ func (m *Manager) buildContainerEnv(idx int64, name, channel string) map[string]
 	}
 }
 
-func (m *Manager) handleStop(ctx context.Context, task types.Task) error {
+func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 	containerName, err := m.state.GetSlotContainer(ctx, task.SlotID)
 	if err != nil {
 		m.publishDBWrite(ctx, task.SlotID, "stop", "manager", "")
+		m.log.Warn("slot not found for stop, publishing status anyway", "slotID", task.SlotID)
 
-		return nil
+		return nil //nolint:nilerr // slot not found is expected; we still publish the stop event.
 	}
 
-	return m.sendCommand(ctx, containerName, types.Task{
-		Command: types.CommandStop,
+	return m.sendCommand(ctx, containerName, model.Task{
+		Command: model.CommandStop,
 		SlotID:  task.SlotID,
 	})
 }
 
-func (m *Manager) handleRestartSlot(ctx context.Context, task types.Task) error {
+func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error {
 	m.log.Warn("restarting slot by monitor signal", "slotID", task.SlotID)
 
 	if _, err := m.state.UnregisterSlot(ctx, task.SlotID); err != nil {
@@ -184,13 +186,13 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task types.Task) error 
 
 	m.publishDBWrite(ctx, task.SlotID, "restarting", "monitor", "heartbeat_timeout")
 
-	return m.handleStart(ctx, types.Task{
-		Command: types.CommandStart,
+	return m.handleStart(ctx, model.Task{
+		Command: model.CommandStart,
 		SlotID:  task.SlotID,
 	})
 }
 
-func (m *Manager) handleRestartContainer(ctx context.Context, task types.Task) error {
+func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) error {
 	containerName := task.ContainerName
 	m.log.Error("full container restart", "container", containerName)
 
@@ -213,8 +215,8 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task types.Task) e
 
 		m.publishDBWrite(ctx, slotID, "restarting", "monitor", "container_freeze")
 
-		if err := m.handleStart(ctx, types.Task{
-			Command: types.CommandStart,
+		if err := m.handleStart(ctx, model.Task{
+			Command: model.CommandStart,
 			SlotID:  slotID,
 		}); err != nil {
 			m.log.Error("failed to restart slot", "slotID", slotID, "error", err)
@@ -227,18 +229,18 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task types.Task) e
 }
 
 // HandleWorkerReport processes status reports from workers.
-func (m *Manager) HandleWorkerReport(ctx context.Context, report types.WorkerReport) {
-	switch {
-	case report.Status == "stopped" || report.Status == "error":
+func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerReport) {
+	switch report.Status {
+	case "stopped", "error":
 		m.handleSlotStopped(ctx, report)
-	case report.Status == "started":
+	case "started":
 		m.publishDBWrite(ctx, report.SlotID, "run_worker", "manager", "")
 	default:
 		m.log.Warn("unknown report status", "status", report.Status)
 	}
 }
 
-func (m *Manager) handleSlotStopped(ctx context.Context, report types.WorkerReport) {
+func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) {
 	containerName, err := m.state.UnregisterSlot(ctx, report.SlotID)
 	if err != nil {
 		m.log.Warn("could not unregister slot", "slotID", report.SlotID)
@@ -315,7 +317,7 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 	m.state.RemoveContainer(ctx, containerName)
 }
 
-func (m *Manager) sendCommand(ctx context.Context, containerName string, task types.Task) error {
+func (m *Manager) sendCommand(ctx context.Context, containerName string, task model.Task) error {
 	queue := m.queueForContainer(containerName)
 
 	data, err := json.Marshal(task)
@@ -339,7 +341,7 @@ func (m *Manager) queueForContainer(containerName string) string {
 }
 
 func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initiatedBy, errorText string) {
-	event := types.DBWriteEvent{
+	event := model.DBWriteEvent{
 		SlotID:      slotID,
 		Status:      status,
 		InitiatedBy: initiatedBy,
