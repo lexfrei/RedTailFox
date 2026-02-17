@@ -121,7 +121,9 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context) map[string]bool {
 func (mon *Monitor) scanHeartbeatKeys(ctx context.Context) []string {
 	var keys []string
 
-	iter := mon.rdb.Scan(ctx, 0, heartbeatKeyPattern, 0).Iterator()
+	const scanBatchSize = 100
+
+	iter := mon.rdb.Scan(ctx, 0, heartbeatKeyPattern, scanBatchSize).Iterator()
 	for iter.Next(ctx) {
 		keys = append(keys, iter.Val())
 	}

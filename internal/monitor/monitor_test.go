@@ -282,6 +282,37 @@ func TestMonitorStep_MissingHeartbeat(t *testing.T) {
 	}
 }
 
+// TestMonitorStep_StaleHeartbeat_NoDoubleRestart verifies that a stale
+// heartbeat produces exactly one restart task, not two. The container appears
+// in both checkHeartbeats (stale) and checkMissingContainers (active set),
+// but because checkHeartbeats adds it to the seen map, checkMissingContainers
+// skips it.
+func TestMonitorStep_StaleHeartbeat_NoDoubleRestart(t *testing.T) {
+	env := setup(t)
+	ctx := context.Background()
+
+	staleTimestamp := time.Now().Unix() - 600
+
+	publishHeartbeat(t, env.srv, testContainerName, model.Heartbeat{
+		Container: testContainerName,
+		Timestamp: staleTimestamp,
+		Slots: []model.SlotHeartbeat{
+			{SlotID: 1, Running: true, Status: "idle", LastActive: staleTimestamp},
+		},
+	})
+
+	registerContainer(t, env.srv, testContainerName)
+
+	// Two Step() calls to reach the failure threshold.
+	env.mon.Step(ctx)
+	env.mon.Step(ctx)
+
+	tasks := readTasks(t, env.srv)
+	if len(tasks) != 1 {
+		t.Fatalf("expected exactly 1 restart task, got %d (double restart bug)", len(tasks))
+	}
+}
+
 func TestMonitorStep_RecoveryResetsCounter(t *testing.T) {
 	env := setup(t)
 	ctx := context.Background()

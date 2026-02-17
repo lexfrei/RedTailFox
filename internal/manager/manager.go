@@ -77,10 +77,6 @@ func (m *Manager) Run(ctx context.Context) {
 
 	m.log.Info("manager started")
 
-	// drainCtx lets the report loop outlive the signal context so that
-	// in-flight worker reports are processed before exit.
-	drainCtx, drainCancel := context.WithCancel(context.Background())
-
 	var wgr sync.WaitGroup
 
 	const goroutines = 3
@@ -102,18 +98,16 @@ func (m *Manager) Run(ctx context.Context) {
 	go func() {
 		defer wgr.Done()
 
+		// Run report loop on main ctx, then drain remaining reports
+		// with a bounded timeout so we never hang on shutdown.
+		m.reportLoop(ctx)
+
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
+		defer drainCancel()
+
+		m.log.Warn("draining remaining reports", "timeout", drainTimeout)
 		m.reportLoop(drainCtx)
 	}()
-
-	// Wait for signal, then give reportLoop a bounded drain window.
-	<-ctx.Done()
-	m.log.Warn("shutting down, draining reports", "timeout", drainTimeout)
-
-	drainTimer := time.NewTimer(drainTimeout)
-	defer drainTimer.Stop()
-
-	<-drainTimer.C
-	drainCancel()
 
 	wgr.Wait()
 
@@ -285,7 +279,7 @@ func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.Raw
 	stored, err := m.state.GetSlotConfig(ctx, slotID)
 	if err != nil {
 		if errors.Is(err, errdefs.ErrConfigNotFound) {
-			m.log.Warn("no stored config found, using empty config",
+			m.log.Error("no stored config found, slot will start with empty config",
 				"slotID", slotID,
 			)
 

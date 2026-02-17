@@ -101,7 +101,7 @@ func TestSlotWorkFuncCalled(t *testing.T) {
 	}
 
 	// Use a 0-second check interval to trigger immediately.
-	cfg := json.RawMessage(`{"bot":{"checkInterval":0}}`)
+	cfg := json.RawMessage(`{"bot":{"checkInterval":1}}`)
 	slot := worker.NewSlot(42, cfg, work, testLogger())
 	slot.Start(context.Background())
 
@@ -127,7 +127,7 @@ func TestSlotWorkFuncError(t *testing.T) {
 		return errTest
 	}
 
-	cfg := json.RawMessage(`{"bot":{"checkInterval":0}}`)
+	cfg := json.RawMessage(`{"bot":{"checkInterval":1}}`)
 	slot := worker.NewSlot(1, cfg, work, testLogger())
 	slot.Start(context.Background())
 
@@ -146,7 +146,7 @@ func TestSlotWorkFuncError(t *testing.T) {
 }
 
 func TestSlotWorkFuncReceivesConfig(t *testing.T) {
-	expectedCfg := `{"bot":{"checkInterval":0,"key":"value"}}`
+	expectedCfg := `{"bot":{"checkInterval":1,"key":"value"}}`
 	received := make(chan json.RawMessage, 1)
 
 	work := func(_ context.Context, info worker.SlotInfo) error {
@@ -188,7 +188,7 @@ func TestSlotWorkFuncCanSetStatus(t *testing.T) {
 		return nil
 	}
 
-	cfg := json.RawMessage(`{"bot":{"checkInterval":0}}`)
+	cfg := json.RawMessage(`{"bot":{"checkInterval":1}}`)
 	slot := worker.NewSlot(1, cfg, work, testLogger())
 	slot.Start(context.Background())
 
