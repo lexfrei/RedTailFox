@@ -52,12 +52,18 @@ func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName stri
 }
 
 // UnregisterSlot removes a slot from its container and returns the container name.
+// Returns ErrSlotNotFound when the slot does not exist, and propagates other
+// Redis errors without masking them.
 func (s *State) UnregisterSlot(ctx context.Context, slotID int) (string, error) {
 	sid := strconv.Itoa(slotID)
 
 	containerName, err := s.rdb.HGet(ctx, slotToContainerKey, sid).Result()
 	if err != nil {
-		return "", errors.Wrap(rtferrors.ErrSlotNotFound, "unregistering slot")
+		if errors.Is(err, redis.Nil) {
+			return "", errors.Wrap(rtferrors.ErrSlotNotFound, "unregistering slot")
+		}
+
+		return "", errors.Wrap(err, "looking up slot container for unregister")
 	}
 
 	pipe := s.rdb.TxPipeline()
@@ -73,12 +79,18 @@ func (s *State) UnregisterSlot(ctx context.Context, slotID int) (string, error) 
 }
 
 // GetSlotContainer returns the container name for a given slot.
+// Returns ErrSlotNotFound when the slot does not exist, and propagates other
+// Redis errors without masking them.
 func (s *State) GetSlotContainer(ctx context.Context, slotID int) (string, error) {
 	sid := strconv.Itoa(slotID)
 
 	val, err := s.rdb.HGet(ctx, slotToContainerKey, sid).Result()
 	if err != nil {
-		return "", errors.Wrap(rtferrors.ErrSlotNotFound, "looking up slot container")
+		if errors.Is(err, redis.Nil) {
+			return "", errors.Wrap(rtferrors.ErrSlotNotFound, "looking up slot container")
+		}
+
+		return "", errors.Wrap(err, "looking up slot container in Redis")
 	}
 
 	return val, nil

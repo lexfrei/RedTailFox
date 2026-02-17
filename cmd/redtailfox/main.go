@@ -110,6 +110,11 @@ func runWorker(ctx context.Context) error {
 
 func runMonitor(ctx context.Context) error {
 	cfg := config.LoadMonitorFromEnv()
+
+	if err := validateMonitorConfig(&cfg); err != nil {
+		return err
+	}
+
 	rdb := redis.NewClient(cfg.Redis.Options())
 
 	if err := pingRedis(ctx, rdb); err != nil {
@@ -124,6 +129,25 @@ func runMonitor(ctx context.Context) error {
 	}, slog.Default())
 
 	mon.Run(ctx)
+
+	return nil
+}
+
+func validateMonitorConfig(cfg *config.Monitor) error {
+	if cfg.MaxSilenceSeconds <= 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"MAX_SILENCE_SECONDS must be positive, got %d", cfg.MaxSilenceSeconds)
+	}
+
+	if cfg.SlotIdleTimeout <= 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"SLOT_IDLE_TIMEOUT must be positive, got %d", cfg.SlotIdleTimeout)
+	}
+
+	if cfg.CheckInterval <= 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"CHECK_INTERVAL must be positive, got %v", cfg.CheckInterval)
+	}
 
 	return nil
 }

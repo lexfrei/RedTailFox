@@ -77,7 +77,8 @@ func (m *Manager) Run(ctx context.Context) {
 
 	m.log.Info("manager started")
 
-	// drainCtx keeps the report loop alive after the main context is cancelled.
+	// drainCtx lets the report loop outlive the signal context so that
+	// in-flight worker reports are processed before exit.
 	drainCtx, drainCancel := context.WithCancel(context.Background())
 
 	var wgr sync.WaitGroup
@@ -101,16 +102,18 @@ func (m *Manager) Run(ctx context.Context) {
 	go func() {
 		defer wgr.Done()
 
-		// Report loop uses drainCtx so it can outlive the main context.
 		m.reportLoop(drainCtx)
 	}()
 
-	// Wait for main context cancellation (signal received).
+	// Wait for signal, then give reportLoop a bounded drain window.
 	<-ctx.Done()
-	m.log.Warn("shutting down, draining reports")
+	m.log.Warn("shutting down, draining reports", "timeout", drainTimeout)
 
-	// Allow drainTimeout for remaining reports, then stop.
-	time.AfterFunc(drainTimeout, drainCancel)
+	drainTimer := time.NewTimer(drainTimeout)
+	defer drainTimer.Stop()
+
+	<-drainTimer.C
+	drainCancel()
 
 	wgr.Wait()
 
@@ -125,7 +128,7 @@ func (m *Manager) taskLoop(ctx context.Context) {
 		default:
 			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.TasksQueue).Result()
 			if err != nil {
-				if errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return
 				}
 
@@ -167,7 +170,7 @@ func (m *Manager) reportLoop(ctx context.Context) {
 		default:
 			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.ReportsQueue).Result()
 			if err != nil {
-				if errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return
 				}
 
@@ -374,7 +377,11 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 	m.log.Warn("restarting slot by monitor signal", "slotID", task.SlotID)
 
 	if _, err := m.state.UnregisterSlot(ctx, task.SlotID); err != nil {
-		m.log.Warn("slot not found during restart", "slotID", task.SlotID)
+		if !errors.Is(err, errdefs.ErrSlotNotFound) {
+			m.log.Error("failed to unregister slot during restart", "slotID", task.SlotID, "error", err)
+		} else {
+			m.log.Warn("slot not found during restart", "slotID", task.SlotID)
+		}
 	}
 
 	m.publishDBWrite(ctx, task.SlotID, "restarting", "monitor", "heartbeat_timeout")
@@ -475,7 +482,13 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 	}
 
 	count, err := m.state.ContainerSlotCount(ctx, containerName)
-	if err != nil || count > 0 {
+	if err != nil {
+		m.log.Error("failed to count container slots", "container", containerName, "error", err)
+
+		return
+	}
+
+	if count > 0 {
 		return
 	}
 
@@ -546,6 +559,8 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 		}
 
 		if _, err := m.state.UnregisterSlot(ctx, slotID); err != nil {
+			m.log.Error("failed to unregister vanished slot", "slotID", slotID, "error", err)
+
 			continue
 		}
 

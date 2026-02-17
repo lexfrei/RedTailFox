@@ -276,6 +276,79 @@ func TestHandleWorkerReport_Started(t *testing.T) {
 	}
 }
 
+func TestHandleRestartContainer(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start 2 slots so a container exists with 2 slots.
+	for slotID := range 2 {
+		task := model.Task{
+			Command: model.CommandStart,
+			SlotID:  slotID + 1,
+			Config:  json.RawMessage(`{}`),
+		}
+
+		if err := env.mgr.HandleTask(ctx, task); err != nil {
+			t.Fatalf("failed to start slot %d: %v", slotID+1, err)
+		}
+	}
+
+	if len(env.runtime.containers) != 1 {
+		t.Fatalf("expected 1 container, got %d", len(env.runtime.containers))
+	}
+
+	// Drain command queues.
+	env.rdb.RPop(ctx, "COMMAND_CHANNEL_1")
+	env.rdb.RPop(ctx, "COMMAND_CHANNEL_1")
+
+	// Restart the container.
+	restartTask := model.Task{
+		Command:       model.CommandRestartContainer,
+		ContainerName: testContainerName,
+	}
+
+	if err := env.mgr.HandleTask(ctx, restartTask); err != nil {
+		t.Fatalf("failed to restart container: %v", err)
+	}
+
+	// Old container should be removed and a new one created.
+	if len(env.runtime.containers) != 1 {
+		t.Errorf("expected 1 container after restart, got %d", len(env.runtime.containers))
+	}
+
+	// Both slots should have "restarting" db_write events.
+	for range 2 {
+		raw, err := env.rdb.RPop(ctx, "db_write_requests").Result()
+		if err != nil {
+			t.Fatalf("expected db_write event: %v", err)
+		}
+
+		var event model.DBWriteEvent
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatalf("failed to parse db event: %v", err)
+		}
+
+		if event.Status != "restarting" {
+			t.Errorf("expected status restarting, got %s", event.Status)
+		}
+	}
+}
+
+func TestHandleRestartContainer_EmptyName(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	task := model.Task{
+		Command:       model.CommandRestartContainer,
+		ContainerName: "",
+	}
+
+	err := env.mgr.HandleTask(ctx, task)
+	if err == nil {
+		t.Fatal("expected error for empty container name")
+	}
+}
+
 func TestSyncContainers_VanishedContainer(t *testing.T) {
 	env := setupManager(t)
 	ctx := context.Background()

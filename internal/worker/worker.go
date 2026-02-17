@@ -157,7 +157,7 @@ func (w *Worker) commandLoop(ctx context.Context) {
 		default:
 			result, err := w.rdb.BRPop(ctx, commandTimeout, w.commandCh).Result()
 			if err != nil {
-				if errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return
 				}
 

@@ -72,8 +72,8 @@ All settings are read from environment variables.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `COMMAND_CHANNEL` | `worker_commands` | Redis queue for receiving commands |
-| `EVENT_CHANNEL` | `events` | Redis queue for events |
 | `CONTAINER_NAME` | `unknown_container` | Name of this container |
+| `WORKER_REPORTS_CHANNEL` | `worker_reports` | Redis queue for slot status reports |
 
 ### Monitor
 
