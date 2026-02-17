@@ -28,10 +28,9 @@ const (
 	maxMessageSize = 1 << 20 // 1 MiB.
 	// maxConfigSize limits the size of slot configuration JSON specifically.
 	maxConfigSize = maxMessageSize
-	// maxContainers is a safety limit on the number of worker containers the
-	// manager will create. This prevents runaway container creation from a
-	// burst of start tasks or a bug in the slot assignment logic.
-	maxContainers = 100
+	// defaultMaxContainers is the default safety limit on the number of worker
+	// containers the manager will create. Override via Config.MaxContainers.
+	defaultMaxContainers = 100
 )
 
 // Config holds manager-specific settings.
@@ -57,6 +56,9 @@ type Config struct {
 	// WorkerPidsLimit is the PID limit for spawned worker containers.
 	// Zero means no limit.
 	WorkerPidsLimit int64
+	// MaxContainers is the maximum number of worker containers the manager
+	// will create. Zero uses defaultMaxContainers.
+	MaxContainers int
 }
 
 // Manager orchestrates container lifecycle and slot distribution.
@@ -73,6 +75,10 @@ type Manager struct {
 
 // New creates a new Manager instance.
 func New(rdb *redis.Client, runtime container.Runtime, cfg Config) *Manager {
+	if cfg.MaxContainers <= 0 {
+		cfg.MaxContainers = defaultMaxContainers
+	}
+
 	return &Manager{
 		rdb:     rdb,
 		runtime: runtime,
@@ -405,10 +411,10 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 		return "", errors.Wrap(err, "counting active containers")
 	}
 
-	if len(active) >= maxContainers {
+	if len(active) >= m.cfg.MaxContainers {
 		return "", errors.Wrapf(errdefs.ErrInvalidConfig,
 			"container limit reached (%d/%d), cannot start new container for slot %d",
-			len(active), maxContainers, slotID)
+			len(active), m.cfg.MaxContainers, slotID)
 	}
 
 	idx, err := m.state.NextContainerIndex(ctx)
@@ -519,10 +525,20 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 
 	m.publishDBWrite(ctx, task.SlotID, "restarting", "monitor", "heartbeat_timeout")
 
-	return m.handleStart(ctx, model.Task{
+	err = m.handleStart(ctx, model.Task{
 		Command: model.CommandStart,
 		SlotID:  task.SlotID,
 	})
+	if err != nil {
+		// Log and publish the error so the slot is not silently lost.
+		// Common cause: stored config expired in Redis (7-day TTL).
+		m.log.Error("failed to restart slot, slot requires manual re-creation",
+			"slotID", task.SlotID, "error", err)
+		m.publishDBWrite(ctx, task.SlotID, "error", "monitor",
+			fmt.Sprintf("restart_failed: %v", err))
+	}
+
+	return err
 }
 
 // handleRestartContainer performs a kill-and-recreate restart: the old container
@@ -839,7 +855,9 @@ func (m *Manager) sendCommand(ctx context.Context, containerName string, task mo
 
 // isContainerRunning checks if a container is still present in the runtime.
 func (m *Manager) isContainerRunning(ctx context.Context, name string) bool {
-	containers, err := m.runtime.List(ctx, m.cfg.ContainerNamePrefix)
+	// Use the container name as the prefix filter so the runtime only
+	// returns matching containers instead of listing all workers.
+	containers, err := m.runtime.List(ctx, name)
 	if err != nil {
 		m.log.Error("failed to check container status, assuming running", "error", err)
 

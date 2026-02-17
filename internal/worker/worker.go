@@ -138,16 +138,15 @@ func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int)
 		return
 	}
 
-	// Release the lock before Stop() so heartbeats still include this
-	// slot while it is shutting down. Delete after Stop() completes.
-	w.mu.Unlock()
-
-	slot.Stop()
-
-	w.mu.Lock()
+	// Delete before Stop() to prevent a concurrent handleStart from seeing
+	// the old slot as "running" in the map. The commandLoop is sequential
+	// so this race is unlikely, but delete-first is the safer default.
+	// Heartbeats may briefly miss the slot during shutdown; the monitor
+	// handles this gracefully via its failure threshold.
 	delete(w.slots, slotKey)
 	w.mu.Unlock()
 
+	slot.Stop()
 	w.sendReport(ctx, slot.ID, "stopped")
 }
 

@@ -82,6 +82,9 @@ type Manager struct {
 	// WorkerPidsLimit is the PID limit for spawned worker containers.
 	// Zero means no limit.
 	WorkerPidsLimit int64
+	// MaxContainers is the maximum number of worker containers.
+	// Zero uses the default (100).
+	MaxContainers int
 }
 
 // Worker holds configuration for the worker component.
@@ -162,6 +165,11 @@ func LoadManagerFromEnv() (Manager, error) {
 		return Manager{}, err
 	}
 
+	maxContainers, err := envInt("MAX_CONTAINERS", 0)
+	if err != nil {
+		return Manager{}, err
+	}
+
 	return Manager{
 		Redis:                redisCfg,
 		MaxSlotsPerContainer: maxSlots,
@@ -175,6 +183,7 @@ func LoadManagerFromEnv() (Manager, error) {
 		RedisPasswordFile:    os.Getenv("REDIS_PASSWORD_FILE"),
 		WorkerMemoryBytes:    int64(workerMemory),
 		WorkerPidsLimit:      int64(workerPids),
+		MaxContainers:        maxContainers,
 	}, nil
 }
 

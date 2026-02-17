@@ -19,7 +19,7 @@ services:
   # manage containers without full daemon control. Disable in development
   # by removing this service and mounting the socket directly into manager.
   socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
+    image: tecnativa/docker-socket-proxy:0.4.2@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -37,7 +37,6 @@ services:
       context: .
       dockerfile: Containerfile
     command: ["/redtailfox", "manager"]
-    user: "0:0"
     restart: unless-stopped
     read_only: true
     security_opt:

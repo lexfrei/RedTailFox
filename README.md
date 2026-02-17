@@ -68,6 +68,9 @@ All settings are read from environment variables.
 | `WORKER_REPORTS_CHANNEL` | `worker_reports` | Redis queue for worker reports |
 | `DB_WRITE_QUEUE` | `db_write_requests` | Redis queue for database write events |
 | `WORKER_NETWORK` | (empty) | Container network for spawned workers |
+| `WORKER_MEMORY_BYTES` | `0` | Memory limit for worker containers (bytes, 0 = no limit) |
+| `WORKER_PIDS_LIMIT` | `0` | PID limit for worker containers (0 = no limit) |
+| `MAX_CONTAINERS` | `100` | Maximum number of worker containers |
 
 ### Worker
 

@@ -14,17 +14,17 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-# Create non-root user for the runtime stage.
-RUN echo "nonroot:x:65532:65532:nonroot:/:/sbin/nologin" >> /etc/passwd && \
-    echo "nonroot:x:65532:" >> /etc/group
+# Create minimal passwd/group for the runtime stage (scratch has no user db).
+RUN echo "nonroot:x:65532:65532:nonroot:/:/sbin/nologin" > /workspace/passwd && \
+    echo "nonroot:x:65532:" > /workspace/group
 
 # Build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o redtailfox ./cmd/redtailfox
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
+COPY --from=builder /workspace/passwd /etc/passwd
+COPY --from=builder /workspace/group /etc/group
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /workspace/redtailfox /redtailfox
 # Default to non-root. The manager service overrides this to root via

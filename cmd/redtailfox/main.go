@@ -128,6 +128,7 @@ func runManager(ctx context.Context) error {
 		RedisPasswordFile:    cfg.RedisPasswordFile,
 		WorkerMemoryBytes:    cfg.WorkerMemoryBytes,
 		WorkerPidsLimit:      cfg.WorkerPidsLimit,
+		MaxContainers:        cfg.MaxContainers,
 	})
 
 	mgr.Run(ctx)
