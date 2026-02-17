@@ -297,13 +297,14 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 
 func (m *Manager) buildContainerEnv(idx int64, name, channel string) map[string]string {
 	return map[string]string{
-		"REDIS_HOST":      m.cfg.RedisHost,
-		"REDIS_PORT":      m.cfg.RedisPort,
-		"REDIS_PASSWORD":  m.cfg.RedisPassword,
-		"COMMAND_CHANNEL": channel,
-		"EVENT_CHANNEL":   m.cfg.EventChannel,
-		"CONTAINER_INDEX": strconv.FormatInt(idx, 10),
-		"CONTAINER_NAME":  name,
+		"REDIS_HOST":             m.cfg.RedisHost,
+		"REDIS_PORT":             m.cfg.RedisPort,
+		"REDIS_PASSWORD":         m.cfg.RedisPassword,
+		"COMMAND_CHANNEL":        channel,
+		"EVENT_CHANNEL":          m.cfg.EventChannel,
+		"WORKER_REPORTS_CHANNEL": m.cfg.ReportsQueue,
+		"CONTAINER_INDEX":        strconv.FormatInt(idx, 10),
+		"CONTAINER_NAME":         name,
 	}
 }
 

@@ -1,6 +1,11 @@
+networks:
+  foxnet:
+
 services:
   redis:
     image: redis:7-alpine
+    networks:
+      - foxnet
     ports:
       - "6379:6379"
     healthcheck:
@@ -14,6 +19,8 @@ services:
       context: .
       dockerfile: Containerfile
     command: ["/redtailfox", "manager"]
+    networks:
+      - foxnet
     depends_on:
       redis:
         condition: service_healthy
@@ -22,6 +29,7 @@ services:
       REDIS_PORT: "6379"
       WORKER_IMAGE: "redtailfox:latest"
       WORKER_CONTAINER_PREFIX: "fox_worker"
+      WORKER_NETWORK: "redtailfox_foxnet"
       MAX_SLOTS_PER_CONTAINER: "10"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -31,6 +39,8 @@ services:
       context: .
       dockerfile: Containerfile
     command: ["/redtailfox", "monitor"]
+    networks:
+      - foxnet
     depends_on:
       redis:
         condition: service_healthy

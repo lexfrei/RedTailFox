@@ -188,6 +188,12 @@ func (s *Slot) tick(ctx context.Context, lastCheck *int64, checkInterval int64) 
 		s.SetStatus(model.SlotStatusErrorPending)
 		s.log.Error("slot work failed", "slotID", s.ID, "error", err)
 		s.backoff(ctx)
+
+		// Keep error status after backoff so the monitor can detect
+		// perpetually failing slots via idle timeout.
+		*lastCheck = time.Now().Unix()
+
+		return
 	}
 
 	*lastCheck = time.Now().Unix()
