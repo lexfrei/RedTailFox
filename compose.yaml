@@ -28,6 +28,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    # NOTE: REDIS_PASSWORD is passed as a plaintext env var to worker containers.
+    # For production, use container secrets or a secrets manager instead.
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"

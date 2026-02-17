@@ -70,6 +70,8 @@ func runManager(ctx context.Context) error {
 	}
 
 	rdb := redis.NewClient(cfg.Redis.Options())
+	defer rdb.Close()
+
 	if err := pingRedis(ctx, rdb); err != nil {
 		return err
 	}
@@ -106,6 +108,7 @@ func runWorker(ctx context.Context) error {
 	}
 
 	rdb := redis.NewClient(cfg.Redis.Options())
+	defer rdb.Close()
 
 	if err := pingRedis(ctx, rdb); err != nil {
 		return err
@@ -129,6 +132,7 @@ func runMonitor(ctx context.Context) error {
 	}
 
 	rdb := redis.NewClient(cfg.Redis.Options())
+	defer rdb.Close()
 
 	if err := pingRedis(ctx, rdb); err != nil {
 		return err

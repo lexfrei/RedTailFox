@@ -216,6 +216,17 @@ func (m *Manager) HandleTask(ctx context.Context, task model.Task) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Commands that operate on a specific slot require a positive slot ID.
+	// Zero is the default int value and could mean "not set" in JSON.
+	switch task.Command {
+	case model.CommandStart, model.CommandRun, model.CommandStartWorker, model.CommandStop, model.CommandRestartSlot:
+		if task.SlotID <= 0 {
+			return errors.Wrapf(errdefs.ErrInvalidConfig, "slot ID must be positive, got %d", task.SlotID)
+		}
+	case model.CommandRestartContainer:
+		// Container-level commands do not need a slot ID.
+	}
+
 	switch task.Command {
 	case model.CommandStart, model.CommandRun, model.CommandStartWorker:
 		return m.handleStart(ctx, task)
@@ -536,7 +547,10 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 			return
 		}
 
+		// Slot was already unregistered (e.g., by handleRestartContainer).
+		// Use report.ContainerName so we still check if the container is empty.
 		m.log.Warn("slot not found during unregister", "slotID", report.SlotID)
+		containerName = report.ContainerName
 	}
 
 	m.publishDBWrite(ctx, report.SlotID, report.Status, "worker", report.ErrorText)

@@ -153,7 +153,7 @@ func envIntOrDefault(key string, fallback int) int {
 
 	parsed, err := strconv.Atoi(val)
 	if err != nil {
-		slog.Warn("invalid integer env var, using default",
+		slog.Error("invalid integer env var, using default",
 			"key", key,
 			"value", val,
 			"default", fallback,
