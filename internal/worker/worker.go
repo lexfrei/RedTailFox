@@ -211,13 +211,17 @@ func (w *Worker) stopAllSlots() {
 	w.slots = make(map[string]*Slot)
 	w.mu.Unlock()
 
+	// Stop all slots first so their goroutines exit before we send reports.
+	for _, slot := range slots {
+		slot.Stop()
+	}
+
 	// Use a detached context with timeout for final reports so they are not
 	// dropped when the main context is already cancelled.
 	reportCtx, cancel := context.WithTimeout(context.Background(), shutdownDelay)
 	defer cancel()
 
 	for _, slot := range slots {
-		slot.Stop()
 		w.sendReport(reportCtx, slot.ID, "stopped")
 	}
 }

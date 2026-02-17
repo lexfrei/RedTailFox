@@ -308,11 +308,8 @@ func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.Raw
 	stored, err := m.state.GetSlotConfig(ctx, slotID)
 	if err != nil {
 		if errors.Is(err, errdefs.ErrConfigNotFound) {
-			m.log.Error("no stored config found, slot will start with empty config",
-				"slotID", slotID,
-			)
-
-			return json.RawMessage("{}"), nil
+			return nil, errors.Wrapf(errdefs.ErrConfigNotFound,
+				"no stored config for slot %d, cannot restart without config", slotID)
 		}
 
 		return nil, errors.Wrapf(err, "loading config for slot %d", slotID)
@@ -398,30 +395,25 @@ func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error {
 	m.log.Warn("restarting slot by monitor signal", "slotID", task.SlotID)
 
-	// Send stop command to the old container so the worker terminates the
-	// slot goroutine. The stop is asynchronous (via Redis queue), so there
-	// is a brief window where both old and new slot instances may run
-	// concurrently until the worker processes the stop. This is acceptable
-	// because the new slot starts on a (potentially different) container and
-	// the old instance terminates once it dequeues the stop command.
-	oldContainer, err := m.state.GetSlotContainer(ctx, task.SlotID)
+	// Unregister the slot BEFORE sending stop so that stale "stopped"
+	// reports from the old worker are rejected by handleSlotStopped
+	// (the slot is no longer registered, so ContainerName won't match).
+	oldContainer, err := m.state.UnregisterSlot(ctx, task.SlotID)
 	if err != nil {
 		if !errors.Is(err, errdefs.ErrSlotNotFound) {
-			m.log.Error("failed to find container for slot restart", "slotID", task.SlotID, "error", err)
+			m.log.Error("failed to unregister slot during restart", "slotID", task.SlotID, "error", err)
 		}
-	} else {
+	}
+
+	// Send stop to the old container after unregistration. The worker will
+	// stop the slot goroutine when it dequeues this command.
+	if oldContainer != "" {
 		stopErr := m.sendCommand(ctx, oldContainer, model.Task{
 			Command: model.CommandStop,
 			SlotID:  task.SlotID,
 		})
 		if stopErr != nil {
 			m.log.Error("failed to send stop to old container", "slotID", task.SlotID, "error", stopErr)
-		}
-	}
-
-	if _, err := m.state.UnregisterSlot(ctx, task.SlotID); err != nil {
-		if !errors.Is(err, errdefs.ErrSlotNotFound) {
-			m.log.Error("failed to unregister slot during restart", "slotID", task.SlotID, "error", err)
 		}
 	}
 

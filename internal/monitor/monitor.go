@@ -20,9 +20,8 @@ const (
 	heartbeatKeyPrefix   = "hb:container:"
 	activeContainersKey  = "manager:active_containers"
 	failureThreshold     = 2
-	slotRestartThreshold = 3
+	maxSlotRestarts      = 3
 	maxContainerRestarts = 5
-	heartbeatKeyPattern  = heartbeatKeyPrefix + "*"
 	defaultCheckInterval = 10 * time.Second
 )
 
@@ -101,9 +100,11 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context) map[string]bool {
 	seen := make(map[string]bool)
 	now := time.Now().Unix()
 
-	keys := mon.scanHeartbeatKeys(ctx)
+	containers := mon.activeContainerNames(ctx)
 
-	for _, key := range keys {
+	for _, containerName := range containers {
+		key := heartbeatKeyPrefix + containerName
+
 		hbt := mon.readHeartbeat(ctx, key)
 		if hbt == nil {
 			continue
@@ -127,22 +128,15 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context) map[string]bool {
 	return seen
 }
 
-func (mon *Monitor) scanHeartbeatKeys(ctx context.Context) []string {
-	var keys []string
-
-	const scanBatchSize = 100
-
-	iter := mon.rdb.Scan(ctx, 0, heartbeatKeyPattern, scanBatchSize).Iterator()
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
-	}
-
-	err := iter.Err()
+func (mon *Monitor) activeContainerNames(ctx context.Context) []string {
+	members, err := mon.rdb.SMembers(ctx, activeContainersKey).Result()
 	if err != nil {
-		mon.log.Error("failed to scan heartbeat keys", "error", err)
+		mon.log.Error("failed to read active containers for heartbeat check", "error", err)
+
+		return nil
 	}
 
-	return keys
+	return members
 }
 
 func (mon *Monitor) readHeartbeat(ctx context.Context, key string) *model.Heartbeat {
@@ -251,7 +245,7 @@ func (mon *Monitor) handleUnhealthySlot(
 	mon.slotFailures[key]++
 	count := mon.slotFailures[key]
 
-	if count > slotRestartThreshold {
+	if count > maxSlotRestarts {
 		mon.log.Error("slot restart threshold exceeded, skipping further restarts",
 			"container", containerName,
 			"slotID", slotID,
