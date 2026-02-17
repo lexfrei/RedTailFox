@@ -91,16 +91,15 @@ func (mon *Monitor) Run(ctx context.Context) {
 // Step performs a single health check cycle. Exported for testing.
 // Not safe for concurrent use — must be called from a single goroutine.
 func (mon *Monitor) Step(ctx context.Context) {
-	seenContainers := mon.checkHeartbeats(ctx)
-	activeContainers := mon.checkMissingContainers(ctx, seenContainers)
+	containers := mon.activeContainerNames(ctx)
+	seenContainers := mon.checkHeartbeats(ctx, containers)
+	activeContainers := mon.checkMissingContainers(ctx, containers, seenContainers)
 	mon.pruneFailures(seenContainers, activeContainers)
 }
 
-func (mon *Monitor) checkHeartbeats(ctx context.Context) map[string]bool {
+func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) map[string]bool {
 	seen := make(map[string]bool)
 	now := time.Now().Unix()
-
-	containers := mon.activeContainerNames(ctx)
 
 	for _, containerName := range containers {
 		key := heartbeatKeyPrefix + containerName
@@ -245,7 +244,20 @@ func (mon *Monitor) handleUnhealthySlot(
 	mon.slotFailures[key]++
 	count := mon.slotFailures[key]
 
-	if count > maxSlotRestarts {
+	if count < failureThreshold {
+		mon.log.Warn("slot health check failed",
+			"container", containerName,
+			"slotID", slotID,
+			"reason", reason,
+			"failures", count,
+			"threshold", failureThreshold,
+		)
+
+		return
+	}
+
+	restartsSent := count - failureThreshold
+	if restartsSent >= maxSlotRestarts {
 		mon.log.Error("slot restart threshold exceeded, skipping further restarts",
 			"container", containerName,
 			"slotID", slotID,
@@ -270,17 +282,10 @@ func slotFailureKey(containerName string, slotID int) string {
 	return fmt.Sprintf("%s:%d", containerName, slotID)
 }
 
-func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]bool) map[string]bool {
+func (mon *Monitor) checkMissingContainers(ctx context.Context, containers []string, seen map[string]bool) map[string]bool {
 	active := make(map[string]bool)
 
-	members, err := mon.rdb.SMembers(ctx, activeContainersKey).Result()
-	if err != nil {
-		mon.log.Error("failed to read active containers", "error", err)
-
-		return active
-	}
-
-	for _, name := range members {
+	for _, name := range containers {
 		active[name] = true
 
 		if seen[name] {

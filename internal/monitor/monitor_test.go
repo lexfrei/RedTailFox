@@ -181,9 +181,18 @@ func TestMonitorStep_IdleSlot(t *testing.T) {
 
 	registerContainer(t, env.srv, testContainerName)
 
+	// First check: slot failure counter incremented but below threshold.
 	env.mon.Step(ctx)
 
 	tasks := readTasks(t, env.srv)
+	if len(tasks) != 0 {
+		t.Fatalf("first check should not restart slot, got %d tasks", len(tasks))
+	}
+
+	// Second check: failure counter reaches threshold, restart sent.
+	env.mon.Step(ctx)
+
+	tasks = readTasks(t, env.srv)
 	if len(tasks) != 1 {
 		t.Fatalf("expected 1 restart task for idle slot, got %d", len(tasks))
 	}
@@ -224,9 +233,18 @@ func TestMonitorStep_SlotNotRunning(t *testing.T) {
 
 	registerContainer(t, env.srv, testContainerName)
 
+	// First check: slot failure counter below threshold.
 	env.mon.Step(ctx)
 
 	tasks := readTasks(t, env.srv)
+	if len(tasks) != 0 {
+		t.Fatalf("first check should not restart slot, got %d tasks", len(tasks))
+	}
+
+	// Second check: failure counter reaches threshold, restart sent.
+	env.mon.Step(ctx)
+
+	tasks = readTasks(t, env.srv)
 	if len(tasks) != 1 {
 		t.Fatalf("expected 1 restart task for stopped slot, got %d", len(tasks))
 	}

@@ -401,7 +401,9 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 	oldContainer, err := m.state.UnregisterSlot(ctx, task.SlotID)
 	if err != nil {
 		if !errors.Is(err, errdefs.ErrSlotNotFound) {
-			m.log.Error("failed to unregister slot during restart", "slotID", task.SlotID, "error", err)
+			// Redis error — cannot safely proceed because the old slot
+			// might still be registered, risking split-brain.
+			return errors.Wrap(err, "unregistering slot during restart")
 		}
 	}
 
