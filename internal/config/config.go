@@ -155,12 +155,12 @@ func LoadManagerFromEnv() (Manager, error) {
 		return Manager{}, err
 	}
 
-	workerMemory, err := envInt("WORKER_MEMORY_BYTES", 0)
+	workerMemory, err := envInt64("WORKER_MEMORY_BYTES", 0)
 	if err != nil {
 		return Manager{}, err
 	}
 
-	workerPids, err := envInt("WORKER_PIDS_LIMIT", 0)
+	workerPids, err := envInt64("WORKER_PIDS_LIMIT", 0)
 	if err != nil {
 		return Manager{}, err
 	}
@@ -181,8 +181,8 @@ func LoadManagerFromEnv() (Manager, error) {
 		DBWriteQueue:         envOrDefault("DB_WRITE_QUEUE", "db_write_requests"),
 		WorkerNetwork:        envOrDefault("WORKER_NETWORK", ""),
 		RedisPasswordFile:    os.Getenv("REDIS_PASSWORD_FILE"),
-		WorkerMemoryBytes:    int64(workerMemory),
-		WorkerPidsLimit:      int64(workerPids),
+		WorkerMemoryBytes:    workerMemory,
+		WorkerPidsLimit:      workerPids,
 		MaxContainers:        maxContainers,
 	}, nil
 }
@@ -260,6 +260,28 @@ func envInt(key string, fallback int) (int, error) {
 	if err != nil {
 		return 0, errors.Wrapf(errdefs.ErrInvalidConfig,
 			"env var %s has invalid integer value %q", key, val)
+	}
+
+	return parsed, nil
+}
+
+// envInt64 reads a 64-bit integer environment variable. Use this instead of
+// envInt for values that may exceed 32-bit range (e.g. memory limits in bytes).
+func envInt64(key string, fallback int64) (int64, error) {
+	val, ok := os.LookupEnv(key)
+	if !ok || val == "" {
+		return fallback, nil
+	}
+
+	const (
+		base10 = 10
+		bits64 = 64
+	)
+
+	parsed, err := strconv.ParseInt(val, base10, bits64)
+	if err != nil {
+		return 0, errors.Wrapf(errdefs.ErrInvalidConfig,
+			"env var %s has invalid int64 value %q", key, val)
 	}
 
 	return parsed, nil

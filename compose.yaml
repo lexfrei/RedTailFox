@@ -36,6 +36,7 @@ services:
     build:
       context: .
       dockerfile: Containerfile
+    image: redtailfox:latest
     command: ["/redtailfox", "manager"]
     restart: unless-stopped
     read_only: true
@@ -67,6 +68,7 @@ services:
     build:
       context: .
       dockerfile: Containerfile
+    image: redtailfox:latest
     command: ["/redtailfox", "monitor"]
     restart: unless-stopped
     read_only: true

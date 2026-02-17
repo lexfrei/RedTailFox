@@ -927,10 +927,11 @@ func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initia
 // shutdownContainers stops and removes all tracked worker containers
 // concurrently during graceful shutdown. Uses a background context since
 // the signal context is already cancelled at this point.
+//
+// No mutex is needed: wgr.Wait() in Run() guarantees all three loop
+// goroutines (taskLoop, reportLoop+drain, syncLoop) have exited before
+// this method is called, so no concurrent access to m.mu is possible.
 func (m *Manager) shutdownContainers() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	ctx, cancel := context.WithTimeout(context.Background(), containerShutdownTimeout)
 	defer cancel()
 

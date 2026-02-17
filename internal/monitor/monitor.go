@@ -284,6 +284,13 @@ func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots 
 	for idx := range slots {
 		slot := &slots[idx]
 
+		if slot.SlotID <= 0 {
+			mon.log.Warn("invalid slot ID in heartbeat, skipping",
+				"container", containerName, "slotID", slot.SlotID)
+
+			continue
+		}
+
 		if !slot.Running {
 			mon.handleUnhealthySlot(ctx, containerName, slot.SlotID, "slot not running")
 
