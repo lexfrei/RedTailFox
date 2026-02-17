@@ -19,6 +19,7 @@ const (
 	activeContainersKey    = "manager:active_containers"
 	containerCounterKey    = "manager:container_counter"
 	slotConfigKeyPrefix    = "manager:config:slot:"
+	containerChannelsKey   = "manager:container_channels"
 )
 
 // State manages the Redis-backed state for slot-to-container mappings.
@@ -179,13 +180,63 @@ func (s *State) ContainerSlots(ctx context.Context, containerName string) ([]str
 	return slots, nil
 }
 
-// RemoveContainer removes a container from the active set and deletes its slot set atomically.
-func (s *State) RemoveContainer(ctx context.Context, containerName string) error {
-	pipe := s.rdb.TxPipeline()
-	pipe.Del(ctx, containerSlotsKey(containerName))
-	pipe.SRem(ctx, activeContainersKey, containerName)
+// SetContainerChannel stores the command channel for a container.
+func (s *State) SetContainerChannel(ctx context.Context, containerName, channel string) error {
+	err := s.rdb.HSet(ctx, containerChannelsKey, containerName, channel).Err()
+	if err != nil {
+		return errors.Wrap(err, "storing container channel")
+	}
 
-	_, err := pipe.Exec(ctx)
+	return nil
+}
+
+// GetContainerChannel retrieves the command channel for a container.
+func (s *State) GetContainerChannel(ctx context.Context, containerName string) (string, error) {
+	val, err := s.rdb.HGet(ctx, containerChannelsKey, containerName).Result()
+	if err != nil {
+		return "", errors.Wrap(err, "looking up container channel")
+	}
+
+	return val, nil
+}
+
+// removeContainerScript atomically removes all state for a container:
+// the slot set, active membership, command channel, and orphaned slot-to-container mappings.
+// KEYS[1] = slots set key, KEYS[2] = active containers set, KEYS[3] = slot-to-container hash,
+// KEYS[4] = container channels hash.
+// ARGV[1] = container name.
+//
+//nolint:gochecknoglobals // Pre-compiled Lua script for atomic container state removal.
+var removeContainerScript = redis.NewScript(`
+local slotsKey = KEYS[1]
+local activeKey = KEYS[2]
+local s2cKey = KEYS[3]
+local channelsKey = KEYS[4]
+local containerName = ARGV[1]
+
+local slots = redis.call('SMEMBERS', slotsKey)
+for _, sid in ipairs(slots) do
+    redis.call('HDEL', s2cKey, sid)
+end
+redis.call('DEL', slotsKey)
+redis.call('SREM', activeKey, containerName)
+redis.call('HDEL', channelsKey, containerName)
+return 1
+`)
+
+// RemoveContainer atomically removes all state for a container: the slot set,
+// active membership, command channel, and orphaned slot-to-container mappings.
+func (s *State) RemoveContainer(ctx context.Context, containerName string) error {
+	err := removeContainerScript.Run(
+		ctx, s.rdb,
+		[]string{
+			containerSlotsKey(containerName),
+			activeContainersKey,
+			slotToContainerKey,
+			containerChannelsKey,
+		},
+		containerName,
+	).Err()
 	if err != nil {
 		return errors.Wrap(err, "removing container state")
 	}

@@ -41,6 +41,13 @@ func main() {
 	}
 }
 
+func pingRedis(ctx context.Context, rdb *redis.Client) {
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		slog.Error("failed to connect to Redis", "error", err)
+		os.Exit(1)
+	}
+}
+
 func runManager(ctx context.Context) {
 	cfg := config.LoadManagerFromEnv()
 
@@ -50,6 +57,7 @@ func runManager(ctx context.Context) {
 	}
 
 	rdb := redis.NewClient(cfg.Redis.Options())
+	pingRedis(ctx, rdb)
 
 	runtime, err := container.NewOCIRuntime(slog.Default())
 	if err != nil {
@@ -78,6 +86,7 @@ func runManager(ctx context.Context) {
 func runWorker(ctx context.Context) {
 	cfg := config.LoadWorkerFromEnv()
 	rdb := redis.NewClient(cfg.Redis.Options())
+	pingRedis(ctx, rdb)
 
 	wrk := worker.New(rdb, cfg.ContainerName, cfg.CommandChannel, cfg.ReportsQueue, nil, slog.Default())
 	wrk.Run(ctx)
@@ -86,6 +95,7 @@ func runWorker(ctx context.Context) {
 func runMonitor(ctx context.Context) {
 	cfg := config.LoadMonitorFromEnv()
 	rdb := redis.NewClient(cfg.Redis.Options())
+	pingRedis(ctx, rdb)
 
 	mon := monitor.New(rdb, monitor.Config{
 		MaxSilenceSeconds: cfg.MaxSilenceSeconds,

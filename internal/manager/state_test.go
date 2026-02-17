@@ -222,4 +222,14 @@ func TestRemoveContainer(t *testing.T) {
 	if len(active) != 0 {
 		t.Errorf("expected 0 active containers, got %d", len(active))
 	}
+
+	// Verify orphaned slot-to-container entries are also cleaned up.
+	exists, err := state.SlotExists(ctx, 1)
+	if err != nil {
+		t.Fatalf("unexpected error checking slot existence: %v", err)
+	}
+
+	if exists {
+		t.Error("expected slot to be cleaned up after RemoveContainer")
+	}
 }

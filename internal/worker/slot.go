@@ -47,6 +47,7 @@ type Slot struct {
 	stopCh   chan struct{}
 	doneCh   chan struct{}
 	stopOnce sync.Once
+	doneOnce sync.Once
 	started  bool
 	log      *slog.Logger
 }
@@ -89,7 +90,7 @@ func (s *Slot) Stop() {
 
 		// If never started, close doneCh ourselves since run() will never run.
 		if !started {
-			close(s.doneCh)
+			s.closeDone()
 		}
 	})
 
@@ -129,8 +130,16 @@ func (s *Slot) Snapshot() model.SlotHeartbeat {
 	}
 }
 
+// closeDone safely closes doneCh exactly once, preventing double-close panics
+// when Start() and Stop() race.
+func (s *Slot) closeDone() {
+	s.doneOnce.Do(func() {
+		close(s.doneCh)
+	})
+}
+
 func (s *Slot) run(parent context.Context) {
-	defer close(s.doneCh)
+	defer s.closeDone()
 
 	checkInterval := extractCheckInterval(s.Config, s.log)
 	lastCheck := int64(0)
@@ -215,6 +224,7 @@ func extractCheckInterval(config json.RawMessage, log *slog.Logger) int {
 	var cfg struct {
 		Bot struct {
 			CheckInterval int `json:"checkInterval"`
+			Interval      int `json:"interval"`
 		} `json:"bot"`
 	}
 
@@ -228,11 +238,18 @@ func extractCheckInterval(config json.RawMessage, log *slog.Logger) int {
 		return defaultInterval
 	}
 
-	if cfg.Bot.CheckInterval <= 0 {
+	// Prefer checkInterval; fall back to legacy interval key for backward
+	// compatibility with configs created by the Python version.
+	interval := cfg.Bot.CheckInterval
+	if interval <= 0 {
+		interval = cfg.Bot.Interval
+	}
+
+	if interval <= 0 {
 		log.Info("check interval not set in config, using default", "default", defaultInterval)
 
 		return defaultInterval
 	}
 
-	return cfg.Bot.CheckInterval
+	return interval
 }

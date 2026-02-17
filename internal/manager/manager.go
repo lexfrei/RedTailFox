@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os/signal"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,12 +41,15 @@ type Config struct {
 }
 
 // Manager orchestrates container lifecycle and slot distribution.
+// All container lifecycle operations are serialized via mu to prevent
+// TOCTOU races between taskLoop, reportLoop, and syncLoop.
 type Manager struct {
 	rdb     *redis.Client
 	runtime container.Runtime
 	state   *State
 	cfg     Config
 	log     *slog.Logger
+	mu      sync.Mutex
 }
 
 // New creates a new Manager instance.
@@ -187,6 +189,9 @@ func (m *Manager) syncLoop(ctx context.Context) {
 
 // HandleTask dispatches a task to the appropriate handler.
 func (m *Manager) HandleTask(ctx context.Context, task model.Task) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	switch task.Command {
 	case model.CommandStart, model.CommandRun, model.CommandStartWorker:
 		return m.handleStart(ctx, task)
@@ -250,7 +255,12 @@ func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.Raw
 
 	stored, err := m.state.GetSlotConfig(ctx, slotID)
 	if err != nil {
-		return nil, errors.Wrapf(err, "restart impossible for slot %d", slotID)
+		m.log.Warn("no stored config found, using empty config",
+			"slotID", slotID,
+			"error", err,
+		)
+
+		return json.RawMessage("{}"), nil
 	}
 
 	return stored, nil
@@ -290,6 +300,10 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 		m.publishDBWrite(ctx, slotID, "error", "manager", fmt.Sprintf("container_start_fail: %v", err))
 
 		return "", errors.Wrap(err, "starting container")
+	}
+
+	if err := m.state.SetContainerChannel(ctx, containerName, channel); err != nil {
+		m.log.Error("failed to store container channel", "container", containerName, "error", err)
 	}
 
 	return containerName, nil
@@ -393,6 +407,9 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 
 // HandleWorkerReport processes status reports from workers.
 func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerReport) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	switch report.Status {
 	case "stopped", "error":
 		m.handleSlotStopped(ctx, report)
@@ -438,6 +455,9 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 
 // SyncContainers detects containers that vanished from the runtime but still exist in Redis.
 func (m *Manager) SyncContainers(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	actual, err := m.runtime.List(ctx, m.cfg.ContainerNamePrefix)
 	if err != nil {
 		m.log.Error("sync: failed to list containers", "error", err)
@@ -496,7 +516,10 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 }
 
 func (m *Manager) sendCommand(ctx context.Context, containerName string, task model.Task) error {
-	queue := m.queueForContainer(containerName)
+	queue, err := m.state.GetContainerChannel(ctx, containerName)
+	if err != nil {
+		return errors.Wrapf(err, "looking up command channel for %s", containerName)
+	}
 
 	data, err := json.Marshal(task)
 	if err != nil {
@@ -510,12 +533,6 @@ func (m *Manager) sendCommand(ctx context.Context, containerName string, task mo
 	m.log.Info("command sent", "command", task.Command, "slotID", task.SlotID, "container", containerName)
 
 	return nil
-}
-
-func (m *Manager) queueForContainer(containerName string) string {
-	parts := splitLast(containerName, "_")
-
-	return fmt.Sprintf("%s_%s", m.cfg.CommandChannelPrefix, parts)
 }
 
 func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initiatedBy, errorText string) {
@@ -538,13 +555,4 @@ func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initia
 	if err != nil {
 		m.log.Error("failed to publish db write event", "error", err)
 	}
-}
-
-func splitLast(str, sep string) string {
-	idx := strings.LastIndex(str, sep)
-	if idx < 0 {
-		return str
-	}
-
-	return str[idx+len(sep):]
 }
