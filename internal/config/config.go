@@ -2,7 +2,6 @@
 package config
 
 import (
-	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -92,40 +91,51 @@ type Monitor struct {
 	TasksQueue        string
 }
 
-func loadRedis() Redis {
+func loadRedis() (Redis, error) {
 	password := envOrDefault("REDIS_PASSWORD", "")
+
 	if password == "" {
-		password = loadPasswordFile()
+		var err error
+
+		password, err = loadPasswordFile()
+		if err != nil {
+			return Redis{}, err
+		}
 	}
 
 	return Redis{
 		Host:     envOrDefault("REDIS_HOST", "localhost"),
 		Port:     envOrDefault("REDIS_PORT", "6379"),
 		Password: password,
-	}
+	}, nil
 }
 
 // loadPasswordFile reads a password from the file pointed to by
-// REDIS_PASSWORD_FILE. Returns empty string if the env var is unset.
-func loadPasswordFile() string {
+// REDIS_PASSWORD_FILE. Returns empty string if the env var is unset,
+// and an error if the file cannot be read.
+func loadPasswordFile() (string, error) {
 	path := os.Getenv("REDIS_PASSWORD_FILE")
 	if path == "" {
-		return ""
+		return "", nil
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		slog.Error("failed to read REDIS_PASSWORD_FILE", "path", path, "error", err)
-
-		return ""
+		return "", errors.Wrapf(errdefs.ErrInvalidConfig,
+			"failed to read REDIS_PASSWORD_FILE %q: %v", path, err)
 	}
 
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(string(data)), nil
 }
 
 // LoadManagerFromEnv creates Manager config from environment variables.
 func LoadManagerFromEnv() (Manager, error) {
 	const defaultMaxSlots = 10
+
+	redisCfg, err := loadRedis()
+	if err != nil {
+		return Manager{}, err
+	}
 
 	maxSlots, err := envInt("MAX_SLOTS_PER_CONTAINER", defaultMaxSlots)
 	if err != nil {
@@ -133,7 +143,7 @@ func LoadManagerFromEnv() (Manager, error) {
 	}
 
 	return Manager{
-		Redis:                loadRedis(),
+		Redis:                redisCfg,
 		MaxSlotsPerContainer: maxSlots,
 		WorkerImage:          envOrDefault("WORKER_IMAGE", "fox_worker:latest"),
 		ContainerNamePrefix:  envOrDefault("WORKER_CONTAINER_PREFIX", "fox_worker"),
@@ -146,13 +156,18 @@ func LoadManagerFromEnv() (Manager, error) {
 }
 
 // LoadWorkerFromEnv creates Worker config from environment variables.
-func LoadWorkerFromEnv() Worker {
+func LoadWorkerFromEnv() (Worker, error) {
+	redisCfg, err := loadRedis()
+	if err != nil {
+		return Worker{}, err
+	}
+
 	return Worker{
-		Redis:          loadRedis(),
+		Redis:          redisCfg,
 		CommandChannel: envOrDefault("COMMAND_CHANNEL", "worker_commands"),
 		ContainerName:  envOrDefault("CONTAINER_NAME", "unknown_container"),
 		ReportsQueue:   envOrDefault("WORKER_REPORTS_CHANNEL", "worker_reports"),
-	}
+	}, nil
 }
 
 // LoadMonitorFromEnv creates Monitor config from environment variables.
@@ -178,8 +193,13 @@ func LoadMonitorFromEnv() (Monitor, error) {
 		return Monitor{}, err
 	}
 
+	redisCfg, err := loadRedis()
+	if err != nil {
+		return Monitor{}, err
+	}
+
 	return Monitor{
-		Redis:             loadRedis(),
+		Redis:             redisCfg,
 		CheckInterval:     time.Duration(interval) * time.Second,
 		MaxSilenceSeconds: int64(maxSilence),
 		SlotIdleTimeout:   int64(slotIdle),

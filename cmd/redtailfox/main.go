@@ -115,7 +115,10 @@ func runManager(ctx context.Context) error {
 }
 
 func runWorker(ctx context.Context) error {
-	cfg := config.LoadWorkerFromEnv()
+	cfg, err := config.LoadWorkerFromEnv()
+	if err != nil {
+		return errors.Wrap(err, "loading worker config")
+	}
 
 	if err := cfg.Redis.Validate(); err != nil {
 		return errors.Wrap(err, "validating redis config")

@@ -499,6 +499,89 @@ func TestSyncContainers_VanishedContainer(t *testing.T) {
 	}
 }
 
+func TestHandleSlotStopped_StaleReport(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start slot 1 on container A (fox_worker_1).
+	task := model.Task{
+		Command: model.CommandStart,
+		SlotID:  1,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	err := env.mgr.HandleTask(ctx, task)
+	if err != nil {
+		t.Fatalf("failed to start slot: %v", err)
+	}
+
+	containerA := testContainerName
+
+	// Full container restart moves the slot to a new container (fox_worker_2).
+	restartTask := model.Task{
+		Command:       model.CommandRestartContainer,
+		ContainerName: containerA,
+	}
+
+	err = env.mgr.HandleTask(ctx, restartTask)
+	if err != nil {
+		t.Fatalf("failed to restart container: %v", err)
+	}
+
+	// Verify slot is now on a different container.
+	if len(env.runtime.containers) != 1 {
+		t.Fatalf("expected 1 container after restart, got %d", len(env.runtime.containers))
+	}
+
+	// Send a stale "stopped" report from the old container A.
+	// It should be ignored because the slot is now on container B.
+	staleReport := model.WorkerReport{
+		SlotID:        1,
+		Status:        "stopped",
+		ContainerName: containerA,
+	}
+
+	env.mgr.HandleWorkerReport(ctx, staleReport)
+
+	// The new container should still be running — stale report was rejected.
+	if len(env.runtime.containers) != 1 {
+		t.Errorf("expected 1 container still running after stale report, got %d",
+			len(env.runtime.containers))
+	}
+}
+
+func TestHandleSlotStopped_EmptyContainerName(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start a slot so something exists.
+	task := model.Task{
+		Command: model.CommandStart,
+		SlotID:  1,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	err := env.mgr.HandleTask(ctx, task)
+	if err != nil {
+		t.Fatalf("failed to start slot: %v", err)
+	}
+
+	// Send report without ContainerName — should be rejected.
+	report := model.WorkerReport{
+		SlotID:        1,
+		Status:        "stopped",
+		ContainerName: "",
+	}
+
+	env.mgr.HandleWorkerReport(ctx, report)
+
+	// Container should still be running — the report was rejected.
+	if len(env.runtime.containers) != 1 {
+		t.Errorf("expected 1 container still running after rejected report, got %d",
+			len(env.runtime.containers))
+	}
+}
+
 func TestHandleRestartContainer_StopFailure(t *testing.T) {
 	env := setupManager(t)
 	ctx := context.Background()

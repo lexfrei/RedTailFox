@@ -97,8 +97,12 @@ func TestLoadManagerFromEnv_InvalidInteger(t *testing.T) {
 func TestLoadWorkerFromEnv_Defaults(t *testing.T) {
 	t.Setenv("COMMAND_CHANNEL", "")
 	t.Setenv("CONTAINER_NAME", "")
+	t.Setenv("REDIS_PASSWORD_FILE", "")
 
-	cfg := config.LoadWorkerFromEnv()
+	cfg, err := config.LoadWorkerFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if cfg.CommandChannel != "worker_commands" {
 		t.Errorf("expected default command channel, got %s", cfg.CommandChannel)
@@ -236,5 +240,19 @@ func TestLoadRedisPasswordEnvTakesPrecedence(t *testing.T) {
 
 	if cfg.Redis.Password != "env-secret" {
 		t.Errorf("expected env password to take precedence, got %q", cfg.Redis.Password)
+	}
+}
+
+func TestLoadRedisPasswordFile_Missing(t *testing.T) {
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("REDIS_PASSWORD_FILE", "/nonexistent/path/to/secret")
+
+	_, err := config.LoadManagerFromEnv()
+	if err == nil {
+		t.Fatal("expected error for missing REDIS_PASSWORD_FILE")
+	}
+
+	if !errors.Is(err, errdefs.ErrInvalidConfig) {
+		t.Errorf("expected ErrInvalidConfig, got %v", err)
 	}
 }
