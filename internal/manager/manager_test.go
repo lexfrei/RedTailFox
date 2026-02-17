@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 const statusRestarting = "restarting"
 
 // mockRuntime implements container.Runtime for testing.
+// All methods are safe for concurrent use via mu.
 type mockRuntime struct {
+	mu         sync.Mutex
 	containers map[string]container.Container
 	runErr     error
 	stopErr    error
@@ -31,6 +34,9 @@ func newMockRuntime() *mockRuntime {
 }
 
 func (m *mockRuntime) Run(_ context.Context, opts *container.RunOptions) (container.Container, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.runErr != nil {
 		return container.Container{}, m.runErr
 	}
@@ -42,6 +48,9 @@ func (m *mockRuntime) Run(_ context.Context, opts *container.RunOptions) (contai
 }
 
 func (m *mockRuntime) Stop(_ context.Context, name string, _ time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.stopErr != nil {
 		return m.stopErr
 	}
@@ -52,6 +61,9 @@ func (m *mockRuntime) Stop(_ context.Context, name string, _ time.Duration) erro
 }
 
 func (m *mockRuntime) Remove(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.removeErr != nil {
 		return m.removeErr
 	}
@@ -62,6 +74,9 @@ func (m *mockRuntime) Remove(_ context.Context, name string) error {
 }
 
 func (m *mockRuntime) List(_ context.Context, namePrefix string) ([]container.Container, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	result := make([]container.Container, 0, len(m.containers))
 
 	for _, ctr := range m.containers {
@@ -71,6 +86,22 @@ func (m *mockRuntime) List(_ context.Context, namePrefix string) ([]container.Co
 	}
 
 	return result, nil
+}
+
+// containerCount returns the number of containers safely.
+func (m *mockRuntime) containerCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return len(m.containers)
+}
+
+// clearContainers removes all containers (simulates them vanishing from runtime).
+func (m *mockRuntime) clearContainers() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	clear(m.containers)
 }
 
 type testEnv struct {
@@ -119,8 +150,8 @@ func TestHandleStartTask_NewContainer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(env.runtime.containers) != 1 {
-		t.Errorf("expected 1 container, got %d", len(env.runtime.containers))
+	if env.runtime.containerCount() != 1 {
+		t.Errorf("expected 1 container, got %d", env.runtime.containerCount())
 	}
 
 	cmd, err := env.rdb.RPop(ctx, "COMMAND_CHANNEL_1").Result()
@@ -162,8 +193,8 @@ func TestHandleStartTask_ExistingContainer(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(env.runtime.containers) != 1 {
-		t.Errorf("expected 1 container (reused), got %d", len(env.runtime.containers))
+	if env.runtime.containerCount() != 1 {
+		t.Errorf("expected 1 container (reused), got %d", env.runtime.containerCount())
 	}
 }
 
@@ -248,8 +279,8 @@ func TestHandleWorkerReport_Stopped(t *testing.T) {
 
 	env.mgr.HandleWorkerReport(ctx, report)
 
-	if len(env.runtime.containers) != 0 {
-		t.Errorf("expected 0 containers after cleanup, got %d", len(env.runtime.containers))
+	if env.runtime.containerCount() != 0 {
+		t.Errorf("expected 0 containers after cleanup, got %d", env.runtime.containerCount())
 	}
 
 	dbEvent, err := env.rdb.RPop(ctx, "db_write_requests").Result()
@@ -310,8 +341,8 @@ func TestHandleRestartContainer(t *testing.T) {
 		}
 	}
 
-	if len(env.runtime.containers) != 1 {
-		t.Fatalf("expected 1 container, got %d", len(env.runtime.containers))
+	if env.runtime.containerCount() != 1 {
+		t.Fatalf("expected 1 container, got %d", env.runtime.containerCount())
 	}
 
 	// Drain command queues.
@@ -329,8 +360,8 @@ func TestHandleRestartContainer(t *testing.T) {
 	}
 
 	// Old container should be removed and a new one created.
-	if len(env.runtime.containers) != 1 {
-		t.Errorf("expected 1 container after restart, got %d", len(env.runtime.containers))
+	if env.runtime.containerCount() != 1 {
+		t.Errorf("expected 1 container after restart, got %d", env.runtime.containerCount())
 	}
 
 	// Both slots should have "restarting" db_write events.
@@ -475,9 +506,7 @@ func TestSyncContainers_VanishedContainer(t *testing.T) {
 	}
 
 	// Simulate container vanishing from runtime.
-	for name := range env.runtime.containers {
-		delete(env.runtime.containers, name)
-	}
+	env.runtime.clearContainers()
 
 	// Sync should detect the vanished container and clean up state.
 	env.mgr.SyncContainers(ctx)
@@ -533,8 +562,8 @@ func TestHandleSlotStopped_StaleReport(t *testing.T) {
 	}
 
 	// Verify slot is now on a different container.
-	if len(env.runtime.containers) != 1 {
-		t.Fatalf("expected 1 container after restart, got %d", len(env.runtime.containers))
+	if env.runtime.containerCount() != 1 {
+		t.Fatalf("expected 1 container after restart, got %d", env.runtime.containerCount())
 	}
 
 	// Send a stale "stopped" report from the old container A.
@@ -548,9 +577,9 @@ func TestHandleSlotStopped_StaleReport(t *testing.T) {
 	env.mgr.HandleWorkerReport(ctx, staleReport)
 
 	// The new container should still be running — stale report was rejected.
-	if len(env.runtime.containers) != 1 {
+	if env.runtime.containerCount() != 1 {
 		t.Errorf("expected 1 container still running after stale report, got %d",
-			len(env.runtime.containers))
+			env.runtime.containerCount())
 	}
 }
 
@@ -580,9 +609,9 @@ func TestHandleSlotStopped_EmptyContainerName(t *testing.T) {
 	env.mgr.HandleWorkerReport(ctx, report)
 
 	// Container should still be running — the report was rejected.
-	if len(env.runtime.containers) != 1 {
+	if env.runtime.containerCount() != 1 {
 		t.Errorf("expected 1 container still running after rejected report, got %d",
-			len(env.runtime.containers))
+			env.runtime.containerCount())
 	}
 }
 
@@ -661,7 +690,7 @@ func TestHandleRestartContainer_StopFailure(t *testing.T) {
 	}
 
 	// Container should still be running — slots must NOT be re-created.
-	if len(env.runtime.containers) != 1 {
-		t.Errorf("expected container to still be running, got %d containers", len(env.runtime.containers))
+	if env.runtime.containerCount() != 1 {
+		t.Errorf("expected container to still be running, got %d containers", env.runtime.containerCount())
 	}
 }

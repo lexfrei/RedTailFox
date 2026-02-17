@@ -78,6 +78,7 @@ type Manager struct {
 func New(rdb *redis.Client, runtime container.Runtime, cfg Config) *Manager {
 	if cfg.MaxContainers <= 0 {
 		cfg.MaxContainers = defaultMaxContainers
+		slog.Info("MaxContainers not set, using default", "maxContainers", defaultMaxContainers)
 	}
 
 	return &Manager{
@@ -610,16 +611,22 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		return errors.Wrapf(err, "removing state for dead container %s, aborting restart", containerName)
 	}
 
+	var failedSlots int
+
 	for _, sid := range slots {
 		slotID, err := strconv.Atoi(sid)
 		if err != nil {
 			m.log.Error("invalid slot ID in container set", "sid", sid, "error", err)
+
+			failedSlots++
 
 			continue
 		}
 
 		if slotID <= 0 {
 			m.log.Error("non-positive slot ID in container set, skipping", "slotID", slotID)
+
+			failedSlots++
 
 			continue
 		}
@@ -632,7 +639,14 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		}); err != nil {
 			m.log.Error("failed to restart slot", "slotID", slotID, "error", err)
 			m.publishDBWrite(ctx, slotID, "error", "monitor", fmt.Sprintf("restart_failed: %v", err))
+
+			failedSlots++
 		}
+	}
+
+	if failedSlots > 0 && failedSlots == len(slots) {
+		return errors.Wrapf(errdefs.ErrContainerNotFound,
+			"all %d slots failed to restart for container %s", len(slots), containerName)
 	}
 
 	return nil

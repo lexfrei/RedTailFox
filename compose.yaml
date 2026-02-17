@@ -28,9 +28,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
+      # CONTAINERS enables access to /containers/* API endpoints.
+      # POST and DELETE are granted per-resource, not globally.
       CONTAINERS: "1"
-      POST: "1"
-      DELETE: "1"
 
   manager:
     build:
