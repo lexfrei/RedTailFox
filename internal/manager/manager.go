@@ -5,15 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os/signal"
 	"strconv"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lexfrei/RedTailFox/internal/container"
-	"github.com/lexfrei/RedTailFox/internal/errdefs"
-	"github.com/lexfrei/RedTailFox/internal/model"
+	"github.com/Dark-F0X/RedTailFox/internal/container"
+	"github.com/Dark-F0X/RedTailFox/internal/errdefs"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
+)
+
+const (
+	popTimeout   = 10 * time.Second
+	syncInterval = 30 * time.Second
 )
 
 // Config holds manager-specific settings.
@@ -48,6 +56,130 @@ func New(rdb *redis.Client, runtime container.Runtime, cfg Config) *Manager {
 		state:   NewState(rdb, cfg.MaxSlotsPerContainer),
 		cfg:     cfg,
 		log:     slog.Default(),
+	}
+}
+
+// Run starts the manager main loop with graceful shutdown.
+func (m *Manager) Run(ctx context.Context) {
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	m.log.Info("manager started")
+
+	var wgr sync.WaitGroup
+
+	const goroutines = 3 // task loop, report listener, sync loop.
+
+	wgr.Add(goroutines)
+
+	go func() {
+		defer wgr.Done()
+
+		m.taskLoop(ctx)
+	}()
+
+	go func() {
+		defer wgr.Done()
+
+		m.reportLoop(ctx)
+	}()
+
+	go func() {
+		defer wgr.Done()
+
+		m.syncLoop(ctx)
+	}()
+
+	wgr.Wait()
+
+	m.log.Warn("manager stopped")
+}
+
+func (m *Manager) taskLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.TasksQueue).Result()
+			if err != nil {
+				if errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) {
+					continue
+				}
+
+				m.log.Error("task listener error", "error", err)
+				time.Sleep(2 * time.Second)
+
+				continue
+			}
+
+			if len(result) < 2 {
+				continue
+			}
+
+			var task model.Task
+
+			err = json.Unmarshal([]byte(result[1]), &task)
+			if err != nil {
+				m.log.Error("failed to parse task", "error", err)
+
+				continue
+			}
+
+			if err := m.HandleTask(ctx, task); err != nil {
+				m.log.Error("failed to handle task", "error", err)
+			}
+		}
+	}
+}
+
+func (m *Manager) reportLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.ReportsQueue).Result()
+			if err != nil {
+				if errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) {
+					continue
+				}
+
+				m.log.Error("report listener error", "error", err)
+				time.Sleep(2 * time.Second)
+
+				continue
+			}
+
+			if len(result) < 2 {
+				continue
+			}
+
+			var report model.WorkerReport
+
+			err = json.Unmarshal([]byte(result[1]), &report)
+			if err != nil {
+				m.log.Error("failed to parse report", "error", err)
+
+				continue
+			}
+
+			m.HandleWorkerReport(ctx, report)
+		}
+	}
+}
+
+func (m *Manager) syncLoop(ctx context.Context) {
+	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.SyncContainers(ctx)
+		}
 	}
 }
 

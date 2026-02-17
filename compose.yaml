@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  manager:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["/redtailfox", "manager"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      WORKER_IMAGE: "redtailfox:latest"
+      WORKER_CONTAINER_PREFIX: "fox_worker"
+      MAX_SLOTS_PER_CONTAINER: "10"
+    volumes:
+      - /var/run/containerd/containerd.sock:/var/run/containerd/containerd.sock
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Containerfile
+    command: ["/redtailfox", "monitor"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CHECK_INTERVAL: "10"
+      MAX_SILENCE_SECONDS: "500"
+      SLOT_IDLE_TIMEOUT: "600"
