@@ -33,6 +33,10 @@ type SlotInfo struct {
 // WorkFunc is the business logic executed by a slot on each work cycle.
 // It receives a cancellable context and slot metadata.
 // Returning an error logs the failure and triggers an error backoff.
+//
+// CONTRACT: Implementations MUST respect context cancellation and return
+// promptly when ctx.Done() is closed. Failure to do so will cause Slot.Stop()
+// to time out and abandon the goroutine, leaking resources.
 type WorkFunc func(ctx context.Context, info SlotInfo) error
 
 // Slot represents a single work unit running inside a container.

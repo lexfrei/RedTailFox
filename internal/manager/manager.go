@@ -258,6 +258,12 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 	}
 
 	if err := m.state.RegisterSlot(ctx, task.SlotID, containerName); err != nil {
+		if errors.Is(err, errdefs.ErrSlotAlreadyRunning) {
+			m.log.Warn("slot registered concurrently, skipping", "slotID", task.SlotID)
+
+			return nil
+		}
+
 		return err
 	}
 
@@ -383,8 +389,11 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 	m.log.Warn("restarting slot by monitor signal", "slotID", task.SlotID)
 
 	// Send stop command to the old container so the worker terminates the
-	// slot goroutine before we start a new instance. This prevents
-	// split-brain where two instances of the same slot run concurrently.
+	// slot goroutine. The stop is asynchronous (via Redis queue), so there
+	// is a brief window where both old and new slot instances may run
+	// concurrently until the worker processes the stop. This is acceptable
+	// because the new slot starts on a (potentially different) container and
+	// the old instance terminates once it dequeues the stop command.
 	oldContainer, err := m.state.GetSlotContainer(ctx, task.SlotID)
 	if err != nil {
 		if !errors.Is(err, errdefs.ErrSlotNotFound) {

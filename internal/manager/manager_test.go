@@ -14,6 +14,8 @@ import (
 	"github.com/Dark-F0X/RedTailFox/internal/model"
 )
 
+const statusRestarting = "restarting"
+
 // mockRuntime implements container.Runtime for testing.
 type mockRuntime struct {
 	containers map[string]container.Container
@@ -328,7 +330,7 @@ func TestHandleRestartContainer(t *testing.T) {
 			t.Fatalf("failed to parse db event: %v", err)
 		}
 
-		if event.Status != "restarting" {
+		if event.Status != statusRestarting {
 			t.Errorf("expected status restarting, got %s", event.Status)
 		}
 	}
@@ -346,6 +348,99 @@ func TestHandleRestartContainer_EmptyName(t *testing.T) {
 	err := env.mgr.HandleTask(ctx, task)
 	if err == nil {
 		t.Fatal("expected error for empty container name")
+	}
+}
+
+func TestHandleRestartSlot(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start a slot.
+	task := model.Task{
+		Command: model.CommandStart,
+		SlotID:  1,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	if err := env.mgr.HandleTask(ctx, task); err != nil {
+		t.Fatalf("failed to start slot: %v", err)
+	}
+
+	// Drain the start command from the queue.
+	env.rdb.RPop(ctx, "COMMAND_CHANNEL_1")
+
+	// Send restart_slot.
+	restartTask := model.Task{
+		Command: model.CommandRestartSlot,
+		SlotID:  1,
+	}
+
+	if err := env.mgr.HandleTask(ctx, restartTask); err != nil {
+		t.Fatalf("failed to restart slot: %v", err)
+	}
+
+	// Old container should have received a stop command.
+	stopRaw, err := env.rdb.RPop(ctx, "COMMAND_CHANNEL_1").Result()
+	if err != nil {
+		t.Fatalf("expected stop command in old container queue: %v", err)
+	}
+
+	var stopCmd model.Task
+	if err := json.Unmarshal([]byte(stopRaw), &stopCmd); err != nil {
+		t.Fatalf("failed to parse stop command: %v", err)
+	}
+
+	if stopCmd.Command != model.CommandStop {
+		t.Errorf("expected stop command, got %s", stopCmd.Command)
+	}
+
+	if stopCmd.SlotID != 1 {
+		t.Errorf("expected slotID 1, got %d", stopCmd.SlotID)
+	}
+
+	// New container should have received a start command (may be same or new).
+	// Read all remaining commands to find the start.
+	var foundStart bool
+
+	for {
+		raw, err := env.rdb.RPop(ctx, "COMMAND_CHANNEL_1").Result()
+		if err != nil {
+			// Try next container queue.
+			raw, err = env.rdb.RPop(ctx, "COMMAND_CHANNEL_2").Result()
+			if err != nil {
+				break
+			}
+		}
+
+		var cmd model.Task
+		if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
+			t.Fatalf("failed to parse command: %v", err)
+		}
+
+		if cmd.Command == model.CommandStart && cmd.SlotID == 1 {
+			foundStart = true
+
+			break
+		}
+	}
+
+	if !foundStart {
+		t.Error("expected start command for restarted slot")
+	}
+
+	// Verify db_write event.
+	dbRaw, err := env.rdb.RPop(ctx, "db_write_requests").Result()
+	if err != nil {
+		t.Fatalf("expected db_write event: %v", err)
+	}
+
+	var event model.DBWriteEvent
+	if err := json.Unmarshal([]byte(dbRaw), &event); err != nil {
+		t.Fatalf("failed to parse db event: %v", err)
+	}
+
+	if event.Status != statusRestarting {
+		t.Errorf("expected status restarting, got %s", event.Status)
 	}
 }
 

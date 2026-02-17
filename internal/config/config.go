@@ -23,6 +23,10 @@ type Redis struct {
 
 // Validate checks that Redis connection parameters are well-formed.
 func (r Redis) Validate() error {
+	if r.Host == "" {
+		return errors.Wrap(errdefs.ErrInvalidConfig, "REDIS_HOST must not be empty")
+	}
+
 	const (
 		minPort = 1
 		maxPort = 65535

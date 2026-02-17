@@ -34,18 +34,40 @@ func NewState(rdb *redis.Client, maxSlots int) *State {
 	return &State{rdb: rdb, maxSlots: maxSlots}
 }
 
-// RegisterSlot assigns a slot to a container in Redis atomically via pipeline.
+// registerSlotScript atomically registers a slot if not already assigned.
+// Returns 1 on success, 0 if the slot is already registered.
+// KEYS[1] = slot-to-container hash, KEYS[2] = container slots set, KEYS[3] = active containers set.
+// ARGV[1] = slot ID string, ARGV[2] = container name.
+//
+//nolint:gochecknoglobals // Pre-compiled Lua script for atomic slot registration.
+var registerSlotScript = redis.NewScript(`
+local existing = redis.call('HGET', KEYS[1], ARGV[1])
+if existing then
+    return 0
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('SADD', KEYS[3], ARGV[2])
+return 1
+`)
+
+// RegisterSlot atomically assigns a slot to a container.
+// Returns ErrSlotAlreadyRunning if the slot is already registered (prevents
+// multi-instance TOCTOU between SlotExists and RegisterSlot).
 func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName string) error {
 	sid := strconv.Itoa(slotID)
 
-	pipe := s.rdb.TxPipeline()
-	pipe.HSet(ctx, slotToContainerKey, sid, containerName)
-	pipe.SAdd(ctx, containerSlotsKey(containerName), sid)
-	pipe.SAdd(ctx, activeContainersKey, containerName)
-
-	_, err := pipe.Exec(ctx)
+	result, err := registerSlotScript.Run(
+		ctx, s.rdb,
+		[]string{slotToContainerKey, containerSlotsKey(containerName), activeContainersKey},
+		sid, containerName,
+	).Int()
 	if err != nil {
-		return errors.Wrap(err, "registering slot in pipeline")
+		return errors.Wrap(err, "registering slot atomically")
+	}
+
+	if result == 0 {
+		return errors.Wrapf(rtferrors.ErrSlotAlreadyRunning, "slot %d", slotID)
 	}
 
 	return nil

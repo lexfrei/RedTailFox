@@ -35,6 +35,7 @@ services:
       WORKER_CONTAINER_PREFIX: "fox_worker"
       WORKER_NETWORK: "foxnet"
       MAX_SLOTS_PER_CONTAINER: "10"
+      WORKER_TASKS_LIST: "manager_tasks"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
