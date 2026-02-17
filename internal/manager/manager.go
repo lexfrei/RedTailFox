@@ -370,11 +370,27 @@ func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error {
 	m.log.Warn("restarting slot by monitor signal", "slotID", task.SlotID)
 
+	// Send stop command to the old container so the worker terminates the
+	// slot goroutine before we start a new instance. This prevents
+	// split-brain where two instances of the same slot run concurrently.
+	oldContainer, err := m.state.GetSlotContainer(ctx, task.SlotID)
+	if err != nil {
+		if !errors.Is(err, errdefs.ErrSlotNotFound) {
+			m.log.Error("failed to find container for slot restart", "slotID", task.SlotID, "error", err)
+		}
+	} else {
+		stopErr := m.sendCommand(ctx, oldContainer, model.Task{
+			Command: model.CommandStop,
+			SlotID:  task.SlotID,
+		})
+		if stopErr != nil {
+			m.log.Error("failed to send stop to old container", "slotID", task.SlotID, "error", stopErr)
+		}
+	}
+
 	if _, err := m.state.UnregisterSlot(ctx, task.SlotID); err != nil {
 		if !errors.Is(err, errdefs.ErrSlotNotFound) {
 			m.log.Error("failed to unregister slot during restart", "slotID", task.SlotID, "error", err)
-		} else {
-			m.log.Warn("slot not found during restart", "slotID", task.SlotID)
 		}
 	}
 
@@ -389,9 +405,9 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 // handleRestartContainer performs a kill-and-recreate restart: the old container
 // is stopped and removed first, then all its slots are re-created in new
 // containers. The worker inside the old container receives SIGTERM from the
-// container stop, but we do not wait for its acknowledgment. Stale "stopped"
-// reports from the dying worker are harmless: the manager mutex serializes
-// HandleWorkerReport, and the slots are already unregistered before re-creation.
+// container stop. Stale "stopped" reports from the dying worker are safely
+// rejected by handleSlotStopped which compares report.ContainerName against
+// the current assignment before unregistering.
 func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) error {
 	containerName := task.ContainerName
 	if containerName == "" {
@@ -458,6 +474,23 @@ func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerRep
 }
 
 func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) {
+	// Guard against stale reports from a dying worker: if the slot was
+	// re-registered to a different container (e.g. after container restart),
+	// the report's container name won't match. Skip unregistration to
+	// prevent the new assignment from being destroyed.
+	if report.ContainerName != "" {
+		currentContainer, err := m.state.GetSlotContainer(ctx, report.SlotID)
+		if err == nil && currentContainer != report.ContainerName {
+			m.log.Warn("ignoring stale report from old container",
+				"slotID", report.SlotID,
+				"reportContainer", report.ContainerName,
+				"currentContainer", currentContainer,
+			)
+
+			return
+		}
+	}
+
 	containerName, err := m.state.UnregisterSlot(ctx, report.SlotID)
 	if err != nil {
 		if !errors.Is(err, errdefs.ErrSlotNotFound) {
@@ -490,11 +523,15 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 
 	stopTimeout := 10 * time.Second
 	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
-		m.log.Error("failed to stop empty container", "container", containerName, "error", err)
+		m.log.Error("failed to stop empty container, skipping removal", "container", containerName, "error", err)
+
+		return
 	}
 
 	if err := m.runtime.Remove(ctx, containerName); err != nil {
 		m.log.Error("failed to remove empty container", "container", containerName, "error", err)
+
+		return
 	}
 
 	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
@@ -502,7 +539,9 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 	}
 }
 
-// SyncContainers detects containers that vanished from the runtime but still exist in Redis.
+// SyncContainers detects and cleans up state mismatches:
+// 1. Containers tracked in Redis but missing from the runtime (vanished).
+// 2. Containers running in the runtime but not tracked in Redis (orphaned).
 func (m *Manager) SyncContainers(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -526,13 +565,27 @@ func (m *Manager) SyncContainers(ctx context.Context) {
 		return
 	}
 
+	redisSet := make(map[string]bool, len(redisContainers))
+
 	for _, name := range redisContainers {
+		redisSet[name] = true
+
 		if actualSet[name] {
 			continue
 		}
 
 		m.log.Warn("container vanished from runtime, cleaning up", "container", name)
 		m.cleanupVanishedContainer(ctx, name)
+	}
+
+	// Detect orphaned containers: running in the runtime but not in Redis.
+	for _, ctr := range actual {
+		if redisSet[ctr.Name] {
+			continue
+		}
+
+		m.log.Warn("orphaned container found, stopping", "container", ctr.Name)
+		m.stopOrphanedContainer(ctx, ctr.Name)
 	}
 }
 
@@ -563,6 +616,19 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 
 	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
 		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+	}
+}
+
+func (m *Manager) stopOrphanedContainer(ctx context.Context, containerName string) {
+	stopTimeout := 10 * time.Second
+	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
+		m.log.Error("failed to stop orphaned container", "container", containerName, "error", err)
+
+		return
+	}
+
+	if err := m.runtime.Remove(ctx, containerName); err != nil {
+		m.log.Error("failed to remove orphaned container", "container", containerName, "error", err)
 	}
 }
 
