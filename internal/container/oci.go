@@ -116,6 +116,13 @@ func (r *OCIRuntime) Run(ctx context.Context, opts *RunOptions) (Container, erro
 
 	startOpts := client.ContainerStartOptions{}
 	if _, err := r.cli.ContainerStart(ctx, result.ID, startOpts); err != nil {
+		// Clean up the created-but-not-started container to prevent leaking
+		// orphans that are invisible to syncLoop (which only lists running containers).
+		if _, rmErr := r.cli.ContainerRemove(ctx, result.ID, client.ContainerRemoveOptions{}); rmErr != nil {
+			r.log.Error("failed to remove container after start failure",
+				"container", opts.Name, "error", rmErr)
+		}
+
 		return Container{}, errors.Wrap(err, "starting container")
 	}
 
