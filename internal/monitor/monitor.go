@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -16,8 +15,6 @@ import (
 )
 
 const (
-	heartbeatKeyPrefix   = "hb:container:"
-	activeContainersKey  = "manager:active_containers"
 	failureThreshold     = 2
 	maxSlotRestarts      = 3
 	maxContainerRestarts = 5
@@ -26,9 +23,6 @@ const (
 	// from oversized names injected into the Redis active set.
 	maxContainerNameLen = 256
 )
-
-// containerNameRe validates container names from the Redis active set.
-var containerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 // Redis key prefixes for persisted failure counters.
 const (
@@ -123,7 +117,7 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) ma
 			continue
 		}
 
-		key := heartbeatKeyPrefix + containerName
+		key := model.HeartbeatKeyPrefix + containerName
 
 		hbt := mon.readHeartbeat(ctx, key)
 		if hbt == nil {
@@ -161,7 +155,7 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) ma
 }
 
 func (mon *Monitor) activeContainerNames(ctx context.Context) []string {
-	members, err := mon.rdb.SMembers(ctx, activeContainersKey).Result()
+	members, err := mon.rdb.SMembers(ctx, model.ActiveContainersKey).Result()
 	if err != nil {
 		mon.log.Error("failed to read active containers for heartbeat check", "error", err)
 
@@ -363,7 +357,7 @@ func (mon *Monitor) handleUnhealthySlot(
 // is well-formed. This prevents crafted or corrupted names from being used
 // to construct Redis keys or leak into log messages.
 func isValidContainerName(name string) bool {
-	return name != "" && len(name) <= maxContainerNameLen && containerNameRe.MatchString(name)
+	return name != "" && len(name) <= maxContainerNameLen && model.ContainerNameRe.MatchString(name)
 }
 
 // slotFailureRedisKey returns the full Redis key for a slot failure counter.

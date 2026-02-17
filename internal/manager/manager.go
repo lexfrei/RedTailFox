@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -158,7 +159,7 @@ func (m *Manager) Run(ctx context.Context) {
 func (m *Manager) recoverPanic(loop string, cancel context.CancelFunc) {
 	if rec := recover(); rec != nil {
 		m.log.Error("panic in manager goroutine, shutting down",
-			"loop", loop, "panic", rec)
+			"loop", loop, "panic", rec, "stack", string(debug.Stack()))
 		cancel()
 	}
 }
@@ -434,6 +435,8 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 		Network:       m.cfg.WorkerNetwork,
 		MemoryBytes:   m.cfg.WorkerMemoryBytes,
 		PidsLimit:     m.cfg.WorkerPidsLimit,
+		ReadOnly:      true,
+		SecurityOpt:   []string{"no-new-privileges:true"},
 	}
 
 	if m.cfg.RedisPasswordFile != "" {
@@ -615,6 +618,12 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 			continue
 		}
 
+		if slotID <= 0 {
+			m.log.Error("non-positive slot ID in container set, skipping", "slotID", slotID)
+
+			continue
+		}
+
 		m.publishDBWrite(ctx, slotID, "restarting", "monitor", "container_freeze")
 
 		if err := m.handleStart(ctx, model.Task{
@@ -739,6 +748,11 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 
 // cleanupEmptyContainer stops and removes a container that has no slots.
 // Called without holding m.mu so the manager remains responsive.
+//
+// NOTE: The syncLoop may concurrently classify this container as "orphaned"
+// (running in runtime but absent from Redis active set) and also attempt to
+// stop/remove it. This produces harmless "not found" errors from the
+// container runtime — the second caller's Stop/Remove simply fails.
 func (m *Manager) cleanupEmptyContainer(ctx context.Context, containerName string) {
 	m.log.Info("container empty, stopping", "container", containerName)
 
@@ -831,6 +845,12 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 		slotID, err := strconv.Atoi(sid)
 		if err != nil {
 			m.log.Error("invalid slot ID in container set", "sid", sid, "error", err)
+
+			continue
+		}
+
+		if slotID <= 0 {
+			m.log.Error("non-positive slot ID in container set, skipping", "slotID", slotID)
 
 			continue
 		}
@@ -937,9 +957,9 @@ func (m *Manager) shutdownContainers() {
 
 	containers, err := m.state.ActiveContainers(ctx)
 	if err != nil {
-		m.log.Error("shutdown: failed to list active containers", "error", err)
+		m.log.Error("shutdown: Redis unavailable, falling back to runtime list", "error", err)
 
-		return
+		containers = m.listContainerNamesFromRuntime(ctx)
 	}
 
 	if len(containers) == 0 {
@@ -957,6 +977,25 @@ func (m *Manager) shutdownContainers() {
 	}
 
 	wgr.Wait()
+}
+
+// listContainerNamesFromRuntime queries the container runtime directly.
+// Used as a fallback during shutdown when Redis is unreachable.
+func (m *Manager) listContainerNamesFromRuntime(ctx context.Context) []string {
+	listed, err := m.runtime.List(ctx, m.cfg.ContainerNamePrefix+"_")
+	if err != nil {
+		m.log.Error("shutdown: runtime list also failed", "error", err)
+
+		return nil
+	}
+
+	names := make([]string, 0, len(listed))
+
+	for _, ctr := range listed {
+		names = append(names, ctr.Name)
+	}
+
+	return names
 }
 
 func (m *Manager) shutdownOneContainer(ctx context.Context, wgr *sync.WaitGroup, name string) {

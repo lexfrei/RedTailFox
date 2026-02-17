@@ -80,6 +80,14 @@ func (r *OCIRuntime) Run(ctx context.Context, opts *RunOptions) (Container, erro
 		hostCfg.PidsLimit = &opts.PidsLimit
 	}
 
+	if opts.ReadOnly {
+		hostCfg.ReadonlyRootfs = true
+	}
+
+	if len(opts.SecurityOpt) > 0 {
+		hostCfg.SecurityOpt = opts.SecurityOpt
+	}
+
 	if opts.Network != "" {
 		hostCfg.NetworkMode = apitypes.NetworkMode(opts.Network)
 	}

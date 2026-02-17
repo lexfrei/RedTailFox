@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	heartbeatKeyPrefix = "hb:container:"
-	heartbeatTTL       = time.Hour
-	heartbeatInterval  = 3 * time.Second
+	heartbeatTTL      = time.Hour
+	heartbeatInterval = 3 * time.Second
 )
 
 // Heartbeat publishes slot health data to Redis at regular intervals.
@@ -76,7 +75,7 @@ func (h *Heartbeat) publish(ctx context.Context) {
 		return
 	}
 
-	key := heartbeatKeyPrefix + h.containerName
+	key := model.HeartbeatKeyPrefix + h.containerName
 
 	err = h.rdb.Set(ctx, key, data, heartbeatTTL).Err()
 	if err != nil {

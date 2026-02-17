@@ -45,6 +45,12 @@ type RunOptions struct {
 	// PidsLimit limits the number of processes in the container.
 	// Zero means no limit. Set to prevent fork bombs.
 	PidsLimit int64
+
+	// ReadOnly mounts the container's root filesystem as read-only.
+	ReadOnly bool
+
+	// SecurityOpt is a list of security options (e.g., "no-new-privileges:true").
+	SecurityOpt []string
 }
 
 // Runtime defines operations for managing OCI-compatible containers.

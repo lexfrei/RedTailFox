@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"regexp"
 	"syscall"
 
 	"github.com/cockroachdb/errors"
@@ -16,14 +15,10 @@ import (
 	"github.com/Dark-F0X/RedTailFox/internal/container"
 	"github.com/Dark-F0X/RedTailFox/internal/errdefs"
 	"github.com/Dark-F0X/RedTailFox/internal/manager"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
 	"github.com/Dark-F0X/RedTailFox/internal/monitor"
 	"github.com/Dark-F0X/RedTailFox/internal/worker"
 )
-
-// containerNameRe validates the container name prefix. OCI runtimes require
-// names to match [a-zA-Z0-9][a-zA-Z0-9_.-]*; the manager appends "_<index>"
-// so the prefix itself must also be valid.
-var containerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 const minArgs = 2
 
@@ -78,22 +73,8 @@ func runManager(ctx context.Context) error {
 		return errors.Wrap(err, "validating redis config")
 	}
 
-	if cfg.WorkerImage == "" {
-		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_IMAGE must not be empty")
-	}
-
-	if cfg.MaxSlotsPerContainer <= 0 {
-		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
-	}
-
-	if cfg.ContainerNamePrefix == "" {
-		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_CONTAINER_PREFIX must not be empty")
-	}
-
-	if !containerNameRe.MatchString(cfg.ContainerNamePrefix) {
-		return errors.Wrapf(errdefs.ErrInvalidConfig,
-			"WORKER_CONTAINER_PREFIX %q contains invalid characters (must match [a-zA-Z0-9][a-zA-Z0-9_.-]*)",
-			cfg.ContainerNamePrefix)
+	if err := validateManagerConfig(&cfg); err != nil {
+		return err
 	}
 
 	if cfg.Redis.Password != "" {
@@ -188,6 +169,39 @@ func runMonitor(ctx context.Context) error {
 	}, slog.Default())
 
 	mon.Run(ctx)
+
+	return nil
+}
+
+func validateManagerConfig(cfg *config.Manager) error {
+	if cfg.WorkerImage == "" {
+		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_IMAGE must not be empty")
+	}
+
+	if cfg.MaxSlotsPerContainer <= 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
+	}
+
+	if cfg.ContainerNamePrefix == "" {
+		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_CONTAINER_PREFIX must not be empty")
+	}
+
+	if !model.ContainerNameRe.MatchString(cfg.ContainerNamePrefix) {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"WORKER_CONTAINER_PREFIX %q contains invalid characters (must match [a-zA-Z0-9][a-zA-Z0-9_.-]*)",
+			cfg.ContainerNamePrefix)
+	}
+
+	if cfg.WorkerMemoryBytes < 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"WORKER_MEMORY_BYTES must be non-negative, got %d", cfg.WorkerMemoryBytes)
+	}
+
+	if cfg.WorkerPidsLimit < 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"WORKER_PIDS_LIMIT must be non-negative, got %d", cfg.WorkerPidsLimit)
+	}
 
 	return nil
 }

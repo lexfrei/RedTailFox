@@ -3,6 +3,7 @@ package manager_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,10 +61,13 @@ func (m *mockRuntime) Remove(_ context.Context, name string) error {
 	return nil
 }
 
-func (m *mockRuntime) List(_ context.Context, _ string) ([]container.Container, error) {
+func (m *mockRuntime) List(_ context.Context, namePrefix string) ([]container.Container, error) {
 	result := make([]container.Container, 0, len(m.containers))
+
 	for _, ctr := range m.containers {
-		result = append(result, ctr)
+		if strings.HasPrefix(ctr.Name, namePrefix) {
+			result = append(result, ctr)
+		}
 	}
 
 	return result, nil

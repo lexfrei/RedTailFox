@@ -11,13 +11,13 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	rtferrors "github.com/Dark-F0X/RedTailFox/internal/errdefs"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
 )
 
 // Redis key constants for state management.
 const (
 	slotToContainerKey     = "manager:slot_to_container"
 	containerInfoKeyPrefix = "manager:container:"
-	activeContainersKey    = "manager:active_containers"
 	containerCounterKey    = "manager:container_counter"
 	slotConfigKeyPrefix    = "manager:config:slot:"
 	containerChannelsKey   = "manager:container_channels"
@@ -59,7 +59,7 @@ func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName stri
 
 	result, err := registerSlotScript.Run(
 		ctx, s.rdb,
-		[]string{slotToContainerKey, containerSlotsKey(containerName), activeContainersKey},
+		[]string{slotToContainerKey, containerSlotsKey(containerName), model.ActiveContainersKey},
 		sid, containerName,
 	).Int()
 	if err != nil {
@@ -156,7 +156,7 @@ return ''
 func (s *State) PickContainer(ctx context.Context) (string, error) {
 	result, err := pickContainerScript.Run(
 		ctx, s.rdb,
-		[]string{activeContainersKey},
+		[]string{model.ActiveContainersKey},
 		s.maxSlots, containerInfoKeyPrefix, ":slots",
 	).Text()
 	if err != nil {
@@ -222,7 +222,7 @@ func (s *State) ContainerSlotCount(ctx context.Context, containerName string) (i
 
 // ActiveContainers returns the set of all active container names.
 func (s *State) ActiveContainers(ctx context.Context) ([]string, error) {
-	members, err := s.rdb.SMembers(ctx, activeContainersKey).Result()
+	members, err := s.rdb.SMembers(ctx, model.ActiveContainersKey).Result()
 	if err != nil {
 		return nil, errors.Wrap(err, "listing active containers")
 	}
@@ -291,7 +291,7 @@ func (s *State) RemoveContainer(ctx context.Context, containerName string) error
 		ctx, s.rdb,
 		[]string{
 			containerSlotsKey(containerName),
-			activeContainersKey,
+			model.ActiveContainersKey,
 			slotToContainerKey,
 			containerChannelsKey,
 		},
