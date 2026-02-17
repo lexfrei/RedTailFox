@@ -19,7 +19,7 @@ import (
 const (
 	defaultReportsQueue = "worker_reports"
 	commandTimeout      = 10 * time.Second
-	shutdownDelay       = time.Second
+	shutdownDelay       = 5 * time.Second
 )
 
 // Worker manages slots inside a container and listens for commands.

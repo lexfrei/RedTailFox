@@ -1,5 +1,6 @@
 networks:
   foxnet:
+    name: foxnet
 
 services:
   redis:
@@ -32,7 +33,7 @@ services:
       REDIS_PORT: "6379"
       WORKER_IMAGE: "redtailfox:latest"
       WORKER_CONTAINER_PREFIX: "fox_worker"
-      WORKER_NETWORK: "redtailfox_foxnet"
+      WORKER_NETWORK: "foxnet"
       MAX_SLOTS_PER_CONTAINER: "10"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

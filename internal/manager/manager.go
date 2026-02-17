@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	popTimeout   = 10 * time.Second
-	syncInterval = 30 * time.Second
+	popTimeout           = 10 * time.Second
+	syncInterval         = 30 * time.Second
+	containerStopTimeout = 10 * time.Second
 )
 
 // Config holds manager-specific settings.
@@ -260,11 +261,22 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 		return err
 	}
 
-	return m.sendCommand(ctx, containerName, model.Task{
+	sendErr := m.sendCommand(ctx, containerName, model.Task{
 		Command: model.CommandStart,
 		SlotID:  task.SlotID,
 		Config:  config,
 	})
+	if sendErr != nil {
+		// Roll back registration to avoid phantom slots (registered
+		// in Redis but no command sent to the worker).
+		if _, err := m.state.UnregisterSlot(ctx, task.SlotID); err != nil {
+			m.log.Error("failed to roll back slot registration", "slotID", task.SlotID, "error", err)
+		}
+
+		return sendErr
+	}
+
+	return nil
 }
 
 func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.RawMessage) (json.RawMessage, error) {
@@ -421,7 +433,7 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		return errors.Wrapf(err, "listing slots for container %s", containerName)
 	}
 
-	stopTimeout := 10 * time.Second
+	stopTimeout := containerStopTimeout
 	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
 		m.log.Error("failed to stop container", "container", containerName, "error", err)
 	}
@@ -478,8 +490,17 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 	// re-registered to a different container (e.g. after container restart),
 	// the report's container name won't match. Skip unregistration to
 	// prevent the new assignment from being destroyed.
+	// On Redis error, skip processing to avoid accidentally destroying
+	// valid slot assignments.
 	if report.ContainerName != "" {
 		currentContainer, err := m.state.GetSlotContainer(ctx, report.SlotID)
+		if err != nil && !errors.Is(err, errdefs.ErrSlotNotFound) {
+			m.log.Error("failed to verify slot container for report, skipping",
+				"slotID", report.SlotID, "error", err)
+
+			return
+		}
+
 		if err == nil && currentContainer != report.ContainerName {
 			m.log.Warn("ignoring stale report from old container",
 				"slotID", report.SlotID,
@@ -521,7 +542,7 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 
 	m.log.Info("container empty, stopping", "container", containerName)
 
-	stopTimeout := 10 * time.Second
+	stopTimeout := containerStopTimeout
 	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
 		m.log.Error("failed to stop empty container, skipping removal", "container", containerName, "error", err)
 
@@ -620,7 +641,7 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 }
 
 func (m *Manager) stopOrphanedContainer(ctx context.Context, containerName string) {
-	stopTimeout := 10 * time.Second
+	stopTimeout := containerStopTimeout
 	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
 		m.log.Error("failed to stop orphaned container", "container", containerName, "error", err)
 

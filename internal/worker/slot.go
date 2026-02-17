@@ -15,6 +15,7 @@ const (
 	tickInterval    = 5 * time.Second
 	errorBackoff    = 30 * time.Second
 	defaultInterval = 900
+	stopTimeout     = 30 * time.Second
 )
 
 // SlotInfo provides read-only context about the slot to the work function.
@@ -80,6 +81,8 @@ func (s *Slot) Start(ctx context.Context) {
 }
 
 // Stop gracefully terminates the slot's work loop and waits for it to finish.
+// If the work function does not exit within stopTimeout, Stop returns anyway
+// to prevent hanging the entire shutdown sequence.
 // Safe to call concurrently and before Start.
 func (s *Slot) Stop() {
 	s.stopOnce.Do(func() {
@@ -96,7 +99,14 @@ func (s *Slot) Stop() {
 		}
 	})
 
-	<-s.doneCh
+	timer := time.NewTimer(stopTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-s.doneCh:
+	case <-timer.C:
+		s.log.Error("slot stop timed out, abandoning goroutine", "slotID", s.ID)
+	}
 }
 
 // IsRunning returns whether the slot is active.
