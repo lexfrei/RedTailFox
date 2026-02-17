@@ -39,6 +39,10 @@ type Config struct {
 	RedisPort            string
 	RedisPassword        string
 	WorkerNetwork        string
+	// RedisPasswordFile is the host path to a file containing the Redis
+	// password. When set, the file is bind-mounted into worker containers
+	// and REDIS_PASSWORD_FILE is used instead of REDIS_PASSWORD.
+	RedisPasswordFile string
 }
 
 // Manager orchestrates container lifecycle and slot distribution.
@@ -201,6 +205,10 @@ func (m *Manager) reportLoop(ctx context.Context) {
 }
 
 func (m *Manager) syncLoop(ctx context.Context) {
+	// Run an immediate sync to detect orphaned containers from a
+	// previous manager instance before the first ticker fires.
+	m.SyncContainers(ctx)
+
 	ticker := time.NewTicker(syncInterval)
 	defer ticker.Stop()
 
@@ -363,6 +371,10 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 		Network:       m.cfg.WorkerNetwork,
 	}
 
+	if m.cfg.RedisPasswordFile != "" {
+		opts.Binds = []string{m.cfg.RedisPasswordFile + ":" + workerPasswordPath + ":ro"}
+	}
+
 	if _, err := m.runtime.Run(ctx, &opts); err != nil {
 		m.publishDBWrite(ctx, slotID, "error", "manager", fmt.Sprintf("container_start_fail: %v", err))
 
@@ -376,16 +388,27 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 	return containerName, nil
 }
 
+// workerPasswordPath is the in-container path where the Redis password file
+// is mounted when the manager is configured with RedisPasswordFile.
+const workerPasswordPath = "/run/secrets/redis_password"
+
 func (m *Manager) buildContainerEnv(idx int64, name, channel string) map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"REDIS_HOST":             m.cfg.RedisHost,
 		"REDIS_PORT":             m.cfg.RedisPort,
-		"REDIS_PASSWORD":         m.cfg.RedisPassword,
 		"COMMAND_CHANNEL":        channel,
 		"WORKER_REPORTS_CHANNEL": m.cfg.ReportsQueue,
 		"CONTAINER_INDEX":        strconv.FormatInt(idx, 10),
 		"CONTAINER_NAME":         name,
 	}
+
+	if m.cfg.RedisPasswordFile != "" {
+		env["REDIS_PASSWORD_FILE"] = workerPasswordPath
+	} else {
+		env["REDIS_PASSWORD"] = m.cfg.RedisPassword
+	}
+
+	return env
 }
 
 // handleStop sends a stop command for a slot. Caller must hold m.mu.

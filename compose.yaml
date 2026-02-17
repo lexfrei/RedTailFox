@@ -23,16 +23,21 @@ services:
     # Manager needs access to the container runtime socket to spawn workers.
     user: "0:0"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     networks:
       - foxnet
     depends_on:
       redis:
         condition: service_healthy
-    # NOTE: REDIS_PASSWORD is passed as a plaintext env var to worker containers.
-    # For production, use container secrets or a secrets manager instead.
+    # NOTE: For production, set REDIS_PASSWORD or mount REDIS_PASSWORD_FILE
+    # to secure the Redis connection. The manager propagates credentials to
+    # worker containers automatically.
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      # REDIS_PASSWORD: ""
+      # REDIS_PASSWORD_FILE: /run/secrets/redis_password
       WORKER_IMAGE: "redtailfox:latest"
       WORKER_CONTAINER_PREFIX: "fox_worker"
       WORKER_NETWORK: "foxnet"
@@ -47,6 +52,9 @@ services:
       dockerfile: Containerfile
     command: ["/redtailfox", "monitor"]
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
     networks:
       - foxnet
     depends_on:
@@ -55,6 +63,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      # REDIS_PASSWORD: ""
       CHECK_INTERVAL: "10"
       MAX_SILENCE_SECONDS: "500"
       SLOT_IDLE_TIMEOUT: "600"

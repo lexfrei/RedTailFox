@@ -57,6 +57,7 @@ func (r *OCIRuntime) Run(ctx context.Context, opts *RunOptions) (Container, erro
 		RestartPolicy: apitypes.RestartPolicy{
 			Name: apitypes.RestartPolicyMode(opts.RestartPolicy),
 		},
+		Binds: opts.Binds,
 	}
 
 	if opts.Network != "" {

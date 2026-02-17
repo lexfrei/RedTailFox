@@ -34,6 +34,9 @@ type RunOptions struct {
 
 	// Network is the container network to attach to (e.g., compose project network).
 	Network string
+
+	// Binds is a list of host:container bind mounts (e.g., "/host/path:/container/path:ro").
+	Binds []string
 }
 
 // Runtime defines operations for managing OCI-compatible containers.

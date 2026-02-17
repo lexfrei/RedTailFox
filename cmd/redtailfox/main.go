@@ -111,6 +111,7 @@ func runManager(ctx context.Context) error {
 		RedisPort:            cfg.Redis.Port,
 		RedisPassword:        cfg.Redis.Password,
 		WorkerNetwork:        cfg.WorkerNetwork,
+		RedisPasswordFile:    cfg.RedisPasswordFile,
 	})
 
 	mgr.Run(ctx)

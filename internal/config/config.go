@@ -72,6 +72,10 @@ type Manager struct {
 	ReportsQueue         string
 	DBWriteQueue         string
 	WorkerNetwork        string
+	// RedisPasswordFile is the host path to a file containing the Redis
+	// password. When set, worker containers receive a bind-mounted copy
+	// instead of a plaintext REDIS_PASSWORD environment variable.
+	RedisPasswordFile string
 }
 
 // Worker holds configuration for the worker component.
@@ -152,6 +156,7 @@ func LoadManagerFromEnv() (Manager, error) {
 		ReportsQueue:         envOrDefault("WORKER_REPORTS_CHANNEL", "worker_reports"),
 		DBWriteQueue:         envOrDefault("DB_WRITE_QUEUE", "db_write_requests"),
 		WorkerNetwork:        envOrDefault("WORKER_NETWORK", ""),
+		RedisPasswordFile:    os.Getenv("REDIS_PASSWORD_FILE"),
 	}, nil
 }
 
