@@ -1,0 +1,5 @@
+# Vendored dependencies.
+vendor/** linguist-vendored
+
+# Generated code.
+**/zz_generated.*.go linguist-generated

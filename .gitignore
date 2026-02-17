@@ -1,15 +1,39 @@
-# Virtual environments
-venv/
-.venv/
-env/
+# Binaries
+/redtailfox
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Python
-__pycache__/
-*.pyc
+# Test binary
+*.test
 
-# Env
-.env
-.idea
+# Coverage
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
 # IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (legacy, to be removed)
+__pycache__/
+*.pyc
+venv/
+.venv/
+env/

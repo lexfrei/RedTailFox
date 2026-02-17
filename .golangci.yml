@@ -1,0 +1,181 @@
+version: "2"
+
+linters:
+  default: all
+  disable:
+    - depguard
+    - exhaustruct
+    - gochecknoinits
+    - wsl
+    - lll
+    - errchkjson
+    - ireturn
+    - gomoddirectives
+  settings:
+    tagliatelle:
+      case:
+        use-field-name: true
+        extended-rules:
+          json:
+            case: camel
+            extra-initialisms: true
+            initialism-overrides:
+              ID: true
+              URL: true
+              CPU: true
+              IP: true
+              OS: true
+              API: true
+              UUID: true
+              DNS: true
+              UID: true
+              GID: true
+              CMD: true
+    dupl:
+      threshold: 100
+    goconst:
+      min-len: 2
+      min-occurrences: 2
+    gocritic:
+      disabled-checks:
+        - dupImport
+        - unnamedResult
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    funlen:
+      lines: 60
+      statements: 60
+    gocyclo:
+      min-complexity: 15
+    cyclop:
+      max-complexity: 15
+    mnd:
+      ignored-numbers:
+        - "2"
+        - "3"
+        - "5"
+        - "10"
+        - "60"
+        - "100"
+        - "500"
+        - "600"
+        - "1000"
+        - "3600"
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    varnamelen:
+      max-distance: 5
+      min-name-length: 3
+      check-receiver: false
+      check-return: false
+      ignore-type-assert-ok: false
+      ignore-map-index-ok: false
+      ignore-chan-recv-ok: false
+      ignore-decls:
+        - wg sync.WaitGroup
+        - wg *sync.WaitGroup
+        - mu sync.Mutex
+        - ok bool
+      ignore-names:
+        - i
+        - w
+        - r
+        - b
+        - c
+        - m
+        - n
+        - tt
+        - rw
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - generated\.go$
+    rules:
+      - linters:
+          - funlen
+          - dupl
+          - gocognit
+          - gocyclo
+          - cyclop
+          - errcheck
+          - testableexamples
+          - testpackage
+          - forcetypeassert
+          - gocritic
+          - nlreturn
+          - wsl_v5
+          - varnamelen
+          - unparam
+          - modernize
+          - gosec
+          - testifylint
+          - perfsprint
+          - paralleltest
+          - maintidx
+          - godox
+          - revive
+          - gochecknoglobals
+        path: _test\.go
+      - linters:
+          - godox
+          - gochecknoglobals
+          - gocognit
+          - funlen
+          - gocyclo
+          - cyclop
+          - maintidx
+          - noinlineerr
+          - mnd
+        path: cmd/
+      - linters:
+          - funcorder
+          - godox
+          - revive
+          - dupl
+        path: internal/manager/
+      - linters:
+          - noinlineerr
+          - funlen
+          - gocognit
+          - maintidx
+          - varnamelen
+          - mnd
+          - fatcontext
+          - gocritic
+        path: internal/manager/
+      - linters:
+          - funlen
+          - gocognit
+          - gocyclo
+          - cyclop
+          - maintidx
+          - mnd
+          - goconst
+          - nestif
+          - noinlineerr
+        path: internal/container/
+
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - generated\.go$
