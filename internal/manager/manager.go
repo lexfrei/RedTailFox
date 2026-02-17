@@ -107,7 +107,11 @@ func (m *Manager) taskLoop(ctx context.Context) {
 		default:
 			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.TasksQueue).Result()
 			if err != nil {
-				if errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
+				if errors.Is(err, redis.Nil) {
 					continue
 				}
 
@@ -145,7 +149,11 @@ func (m *Manager) reportLoop(ctx context.Context) {
 		default:
 			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.ReportsQueue).Result()
 			if err != nil {
-				if errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
+				if errors.Is(err, redis.Nil) {
 					continue
 				}
 
@@ -255,12 +263,15 @@ func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.Raw
 
 	stored, err := m.state.GetSlotConfig(ctx, slotID)
 	if err != nil {
-		m.log.Warn("no stored config found, using empty config",
-			"slotID", slotID,
-			"error", err,
-		)
+		if errors.Is(err, errdefs.ErrConfigNotFound) {
+			m.log.Warn("no stored config found, using empty config",
+				"slotID", slotID,
+			)
 
-		return json.RawMessage("{}"), nil
+			return json.RawMessage("{}"), nil
+		}
+
+		return nil, errors.Wrapf(err, "loading config for slot %d", slotID)
 	}
 
 	return stored, nil
@@ -356,6 +367,12 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 	})
 }
 
+// handleRestartContainer performs a kill-and-recreate restart: the old container
+// is stopped and removed first, then all its slots are re-created in new
+// containers. The worker inside the old container receives SIGTERM from the
+// container stop, but we do not wait for its acknowledgment. Stale "stopped"
+// reports from the dying worker are harmless: the manager mutex serializes
+// HandleWorkerReport, and the slots are already unregistered before re-creation.
 func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) error {
 	containerName := task.ContainerName
 	m.log.Error("full container restart", "container", containerName)

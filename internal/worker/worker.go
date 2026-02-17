@@ -64,9 +64,8 @@ func (w *Worker) Run(ctx context.Context) {
 	w.log.Info("worker ready", "container", w.containerName, "channel", w.commandCh)
 	w.commandLoop(ctx)
 
-	w.log.Warn("shutting down, stopping all slots")
-	w.stopAllSlots()
-	time.Sleep(shutdownDelay)
+	w.log.Info("shutting down, stopping all slots")
+	w.stopAllSlots() //nolint:contextcheck // Intentionally uses background context for shutdown reports.
 }
 
 // HandleCommand processes a single command message. Exported for testing.
@@ -108,7 +107,7 @@ func (w *Worker) handleStart(ctx context.Context, slotID string, task *model.Tas
 	w.slots[slotID] = slot
 	slot.Start(ctx)
 
-	w.sendReport(ctx, task.SlotID, "started", "")
+	w.sendReport(ctx, task.SlotID, "started")
 }
 
 func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int) {
@@ -117,7 +116,7 @@ func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int)
 
 	if !ok {
 		w.mu.Unlock()
-		w.sendReport(ctx, originalID, "stopped", "")
+		w.sendReport(ctx, originalID, "stopped")
 
 		return
 	}
@@ -126,16 +125,15 @@ func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int)
 	w.mu.Unlock()
 
 	slot.Stop()
-	w.sendReport(ctx, slot.ID, "stopped", "")
+	w.sendReport(ctx, slot.ID, "stopped")
 }
 
-func (w *Worker) sendReport(ctx context.Context, slotID int, status, errorText string) {
+func (w *Worker) sendReport(ctx context.Context, slotID int, status string) {
 	report := model.WorkerReport{
 		SlotID:        slotID,
 		Status:        status,
 		ContainerName: w.containerName,
 		InitiatedBy:   "worker",
-		ErrorText:     errorText,
 	}
 
 	data, err := json.Marshal(report)
@@ -159,7 +157,11 @@ func (w *Worker) commandLoop(ctx context.Context) {
 		default:
 			result, err := w.rdb.BRPop(ctx, commandTimeout, w.commandCh).Result()
 			if err != nil {
-				if errors.Is(err, redis.Nil) || errors.Is(err, context.Canceled) {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
+				if errors.Is(err, redis.Nil) {
 					continue
 				}
 
@@ -190,10 +192,23 @@ func (w *Worker) slotList() []*Slot {
 
 func (w *Worker) stopAllSlots() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	slots := make([]*Slot, 0, len(w.slots))
 
 	for _, slot := range w.slots {
+		slots = append(slots, slot)
+	}
+
+	w.slots = make(map[string]*Slot)
+	w.mu.Unlock()
+
+	// Use a detached context with timeout for final reports so they are not
+	// dropped when the main context is already cancelled.
+	reportCtx, cancel := context.WithTimeout(context.Background(), shutdownDelay)
+	defer cancel()
+
+	for _, slot := range slots {
 		slot.Stop()
+		w.sendReport(reportCtx, slot.ID, "stopped")
 	}
 }
 

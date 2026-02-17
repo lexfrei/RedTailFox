@@ -19,10 +19,15 @@ type OCIRuntime struct {
 }
 
 // NewOCIRuntime creates a new OCI runtime using the default environment connection.
-func NewOCIRuntime(log *slog.Logger) (*OCIRuntime, error) {
+// It validates the connection by pinging the daemon before returning.
+func NewOCIRuntime(ctx context.Context, log *slog.Logger) (*OCIRuntime, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, errors.Wrap(err, "connecting to container runtime")
+	}
+
+	if _, err := cli.ServerVersion(ctx, client.ServerVersionOptions{}); err != nil {
+		return nil, errors.Wrap(err, "verifying container runtime connection")
 	}
 
 	return &OCIRuntime{cli: cli, log: log}, nil

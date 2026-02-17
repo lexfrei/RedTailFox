@@ -59,7 +59,7 @@ func runManager(ctx context.Context) {
 	rdb := redis.NewClient(cfg.Redis.Options())
 	pingRedis(ctx, rdb)
 
-	runtime, err := container.NewOCIRuntime(slog.Default())
+	runtime, err := container.NewOCIRuntime(ctx, slog.Default())
 	if err != nil {
 		slog.Error("failed to create container runtime", "error", err)
 		os.Exit(1)

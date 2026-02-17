@@ -82,6 +82,7 @@ func (mon *Monitor) Run(ctx context.Context) {
 }
 
 // Step performs a single health check cycle. Exported for testing.
+// Not safe for concurrent use — must be called from a single goroutine.
 func (mon *Monitor) Step(ctx context.Context) {
 	seenContainers := mon.checkHeartbeats(ctx)
 	activeContainers := mon.checkMissingContainers(ctx, seenContainers)

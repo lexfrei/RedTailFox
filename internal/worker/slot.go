@@ -35,21 +35,23 @@ type SlotInfo struct {
 type WorkFunc func(ctx context.Context, info SlotInfo) error
 
 // Slot represents a single work unit running inside a container.
+// Mutable fields (running, status, lastActive) are unexported and accessed
+// only through thread-safe methods: IsRunning(), SetStatus(), Snapshot().
 type Slot struct {
-	ID         int
-	Config     json.RawMessage
-	Running    bool
-	Status     model.SlotStatus
-	LastActive int64
+	ID     int
+	Config json.RawMessage
 
-	work     WorkFunc
-	mu       sync.Mutex
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	stopOnce sync.Once
-	doneOnce sync.Once
-	started  bool
-	log      *slog.Logger
+	running    bool
+	status     model.SlotStatus
+	lastActive int64
+	work       WorkFunc
+	mu         sync.Mutex
+	stopCh     chan struct{}
+	doneCh     chan struct{}
+	stopOnce   sync.Once
+	doneOnce   sync.Once
+	started    bool
+	log        *slog.Logger
 }
 
 // NewSlot creates a new slot with the given ID, config, and work function.
@@ -58,8 +60,8 @@ func NewSlot(slotID int, config json.RawMessage, work WorkFunc, log *slog.Logger
 	return &Slot{
 		ID:         slotID,
 		Config:     config,
-		Status:     model.SlotStatusIdle,
-		LastActive: time.Now().Unix(),
+		status:     model.SlotStatusIdle,
+		lastActive: time.Now().Unix(),
 		work:       work,
 		stopCh:     make(chan struct{}),
 		doneCh:     make(chan struct{}),
@@ -70,7 +72,7 @@ func NewSlot(slotID int, config json.RawMessage, work WorkFunc, log *slog.Logger
 // Start begins the slot's work loop in a goroutine.
 func (s *Slot) Start(ctx context.Context) {
 	s.mu.Lock()
-	s.Running = true
+	s.running = true
 	s.started = true
 	s.mu.Unlock()
 
@@ -83,7 +85,7 @@ func (s *Slot) Stop() {
 	s.stopOnce.Do(func() {
 		s.mu.Lock()
 		started := s.started
-		s.Running = false
+		s.running = false
 		s.mu.Unlock()
 
 		close(s.stopCh)
@@ -102,7 +104,7 @@ func (s *Slot) IsRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.Running
+	return s.running
 }
 
 // SetStatus updates the slot status and last active timestamp.
@@ -110,8 +112,8 @@ func (s *Slot) SetStatus(status model.SlotStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.Status = status
-	s.LastActive = time.Now().Unix()
+	s.status = status
+	s.lastActive = time.Now().Unix()
 }
 
 // Snapshot returns a thread-safe copy of slot state for heartbeat reporting.
@@ -123,9 +125,9 @@ func (s *Slot) Snapshot() model.SlotHeartbeat {
 
 	return model.SlotHeartbeat{
 		SlotID:     s.ID,
-		Running:    s.Running,
-		Status:     string(s.Status),
-		LastActive: s.LastActive,
+		Running:    s.running,
+		Status:     string(s.status),
+		LastActive: s.lastActive,
 		Timestamp:  now,
 	}
 }

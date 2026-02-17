@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
@@ -117,11 +118,16 @@ func (s *State) PickContainer(ctx context.Context) (string, error) {
 	return result, nil
 }
 
-// SaveSlotConfig stores slot configuration in Redis for restart capability.
+// slotConfigTTL is the expiration time for stored slot configs.
+// Configs are refreshed on each start; expired configs indicate unused slots.
+const slotConfigTTL = 7 * 24 * time.Hour
+
+// SaveSlotConfig stores slot configuration in Redis with a TTL for restart capability.
+// The TTL prevents unbounded memory growth from orphaned configs.
 func (s *State) SaveSlotConfig(ctx context.Context, slotID int, cfg []byte) error {
 	key := fmt.Sprintf("%s%d", slotConfigKeyPrefix, slotID)
 
-	if err := s.rdb.Set(ctx, key, cfg, 0).Err(); err != nil {
+	if err := s.rdb.Set(ctx, key, cfg, slotConfigTTL).Err(); err != nil {
 		return errors.Wrap(err, "saving slot config")
 	}
 
@@ -129,12 +135,18 @@ func (s *State) SaveSlotConfig(ctx context.Context, slotID int, cfg []byte) erro
 }
 
 // GetSlotConfig retrieves stored slot configuration from Redis.
+// Returns ErrConfigNotFound when the key does not exist, and propagates
+// all other Redis errors without masking them.
 func (s *State) GetSlotConfig(ctx context.Context, slotID int) ([]byte, error) {
 	key := fmt.Sprintf("%s%d", slotConfigKeyPrefix, slotID)
 
 	val, err := s.rdb.Get(ctx, key).Bytes()
 	if err != nil {
-		return nil, errors.Wrap(rtferrors.ErrConfigNotFound, "getting slot config")
+		if errors.Is(err, redis.Nil) {
+			return nil, errors.Wrap(rtferrors.ErrConfigNotFound, "getting slot config")
+		}
+
+		return nil, errors.Wrap(err, "getting slot config from Redis")
 	}
 
 	return val, nil
