@@ -42,7 +42,7 @@ func TestHandleCommandStart(t *testing.T) {
 	wrk.HandleCommand(ctx, raw)
 
 	// Verify report was published.
-	reports, err := srv.List("WORKER_REPORTS")
+	reports, err := srv.List("worker_reports")
 	if err != nil {
 		t.Fatalf("failed to read reports: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestHandleCommandStop(t *testing.T) {
 
 	wrk.HandleCommand(ctx, raw)
 
-	reports, err := srv.List("WORKER_REPORTS")
+	reports, err := srv.List("worker_reports")
 	if err != nil {
 		t.Fatalf("failed to read reports: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestHandleCommandStartDuplicate(t *testing.T) {
 	wrk.HandleCommand(ctx, raw)
 
 	// Only one report should be generated (second start is skipped).
-	reports, err := srv.List("WORKER_REPORTS")
+	reports, err := srv.List("worker_reports")
 	if err != nil {
 		t.Fatalf("failed to read reports: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestReportContainsContainerName(t *testing.T) {
 
 	wrk.HandleCommand(ctx, raw)
 
-	reports, err := srv.List("WORKER_REPORTS")
+	reports, err := srv.List("worker_reports")
 	if err != nil {
 		t.Fatalf("failed to read reports: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -218,7 +219,9 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 		return err
 	}
 
-	m.state.RegisterSlot(ctx, task.SlotID, containerName)
+	if err := m.state.RegisterSlot(ctx, task.SlotID, containerName); err != nil {
+		return err
+	}
 
 	return m.sendCommand(ctx, containerName, model.Task{
 		Command: model.CommandStart,
@@ -340,7 +343,13 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 	}
 
 	for _, sid := range slots {
-		slotID, _ := strconv.Atoi(sid)
+		slotID, err := strconv.Atoi(sid)
+		if err != nil {
+			m.log.Error("invalid slot ID in container set", "sid", sid, "error", err)
+
+			continue
+		}
+
 		if _, err := m.state.UnregisterSlot(ctx, slotID); err != nil {
 			m.log.Warn("slot not found during container restart", "slotID", slotID)
 		}
@@ -355,7 +364,9 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		}
 	}
 
-	m.state.RemoveContainer(ctx, containerName)
+	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
+		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+	}
 
 	return nil
 }
@@ -400,7 +411,9 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 		m.log.Error("failed to remove empty container", "container", containerName, "error", err)
 	}
 
-	m.state.RemoveContainer(ctx, containerName)
+	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
+		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+	}
 }
 
 // SyncContainers detects containers that vanished from the runtime but still exist in Redis.
@@ -438,7 +451,13 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 	slots, _ := m.state.ContainerSlots(ctx, containerName)
 
 	for _, sid := range slots {
-		slotID, _ := strconv.Atoi(sid)
+		slotID, err := strconv.Atoi(sid)
+		if err != nil {
+			m.log.Error("invalid slot ID in container set", "sid", sid, "error", err)
+
+			continue
+		}
+
 		if _, err := m.state.UnregisterSlot(ctx, slotID); err != nil {
 			continue
 		}
@@ -446,7 +465,9 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 		m.publishDBWrite(ctx, slotID, "error", "system", "container_vanished")
 	}
 
-	m.state.RemoveContainer(ctx, containerName)
+	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
+		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+	}
 }
 
 func (m *Manager) sendCommand(ctx context.Context, containerName string, task model.Task) error {
@@ -488,15 +509,17 @@ func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initia
 		return
 	}
 
-	m.rdb.LPush(ctx, m.cfg.DBWriteQueue, data)
+	err = m.rdb.LPush(ctx, m.cfg.DBWriteQueue, data).Err()
+	if err != nil {
+		m.log.Error("failed to publish db write event", "error", err)
+	}
 }
 
 func splitLast(str, sep string) string {
-	for idx := len(str) - 1; idx >= 0; idx-- {
-		if string(str[idx]) == sep {
-			return str[idx+1:]
-		}
+	idx := strings.LastIndex(str, sep)
+	if idx < 0 {
+		return str
 	}
 
-	return str
+	return str[idx+len(sep):]
 }

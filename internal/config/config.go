@@ -103,7 +103,7 @@ func LoadMonitorFromEnv() Monitor {
 		CheckInterval:     time.Duration(interval) * time.Second,
 		MaxSilenceSeconds: int64(envIntOrDefault("MAX_SILENCE_SECONDS", defaultMaxSilence)),
 		SlotIdleTimeout:   int64(envIntOrDefault("SLOT_IDLE_TIMEOUT", defaultSlotIdle)),
-		TasksQueue:        envOrDefault("WORKER_TASKS_LIST", "autoreply_queue"),
+		TasksQueue:        envOrDefault("WORKER_TASKS_LIST", "manager_tasks"),
 	}
 }
 

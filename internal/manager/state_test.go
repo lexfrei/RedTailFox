@@ -26,7 +26,9 @@ func TestRegisterSlot(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
 
 	ctr, err := state.GetSlotContainer(ctx, 1)
 	if err != nil {
@@ -43,7 +45,9 @@ func TestUnregisterSlot(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
 
 	containerName, err := state.UnregisterSlot(ctx, 1)
 	if err != nil {
@@ -66,7 +70,9 @@ func TestPickContainer_HasFreeSlots(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 2)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
 
 	ctr, err := state.PickContainer(ctx)
 	if err != nil {
@@ -83,7 +89,9 @@ func TestPickContainer_AllFull(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 1)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
 
 	ctr, err := state.PickContainer(ctx)
 	if err != nil {
@@ -152,8 +160,13 @@ func TestContainerSlotCount(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
-	state.RegisterSlot(ctx, 2, testContainerName)
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
+
+	if err := state.RegisterSlot(ctx, 2, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
 
 	count, err := state.ContainerSlotCount(ctx, testContainerName)
 	if err != nil {
@@ -170,8 +183,13 @@ func TestActiveContainers(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
-	state.RegisterSlot(ctx, 2, "fox_worker_2")
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
+
+	if err := state.RegisterSlot(ctx, 2, "fox_worker_2"); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
 
 	active, err := state.ActiveContainers(ctx)
 	if err != nil {
@@ -188,8 +206,13 @@ func TestRemoveContainer(t *testing.T) {
 	ctx := context.Background()
 	state := manager.NewState(rdb, 10)
 
-	state.RegisterSlot(ctx, 1, testContainerName)
-	state.RemoveContainer(ctx, testContainerName)
+	if err := state.RegisterSlot(ctx, 1, testContainerName); err != nil {
+		t.Fatalf("unexpected error registering slot: %v", err)
+	}
+
+	if err := state.RemoveContainer(ctx, testContainerName); err != nil {
+		t.Fatalf("unexpected error removing container: %v", err)
+	}
 
 	active, err := state.ActiveContainers(ctx)
 	if err != nil {

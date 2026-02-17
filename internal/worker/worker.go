@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	reportsQueue   = "WORKER_REPORTS"
+	reportsQueue   = "worker_reports"
 	commandTimeout = 10 * time.Second
 	shutdownDelay  = time.Second
 )
@@ -77,7 +77,7 @@ func (w *Worker) HandleCommand(ctx context.Context, raw []byte) {
 	case model.CommandStart:
 		w.handleStart(ctx, slotID, &task)
 	case model.CommandStop:
-		w.handleStop(ctx, slotID)
+		w.handleStop(ctx, slotID, task.SlotID)
 	case model.CommandRestartSlot, model.CommandRestartContainer, model.CommandRun, model.CommandStartWorker:
 		w.log.Warn("unsupported command in worker", "command", task.Command)
 	default:
@@ -102,18 +102,18 @@ func (w *Worker) handleStart(ctx context.Context, slotID string, task *model.Tas
 	w.sendReport(ctx, task.SlotID, "started", "")
 }
 
-func (w *Worker) handleStop(ctx context.Context, slotID string) {
+func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int) {
 	w.mu.Lock()
-	slot, ok := w.slots[slotID]
+	slot, ok := w.slots[slotKey]
 
 	if !ok {
 		w.mu.Unlock()
-		w.sendReport(ctx, 0, "stopped", "")
+		w.sendReport(ctx, originalID, "stopped", "")
 
 		return
 	}
 
-	delete(w.slots, slotID)
+	delete(w.slots, slotKey)
 	w.mu.Unlock()
 
 	slot.Stop()

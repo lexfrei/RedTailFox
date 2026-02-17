@@ -24,7 +24,7 @@ services:
       WORKER_CONTAINER_PREFIX: "fox_worker"
       MAX_SLOTS_PER_CONTAINER: "10"
     volumes:
-      - /var/run/containerd/containerd.sock:/var/run/containerd/containerd.sock
+      - /var/run/docker.sock:/var/run/docker.sock
 
   monitor:
     build:

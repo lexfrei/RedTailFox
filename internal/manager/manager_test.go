@@ -275,3 +275,47 @@ func TestHandleWorkerReport_Started(t *testing.T) {
 		t.Errorf("expected status run_worker, got %s", event.Status)
 	}
 }
+
+func TestSyncContainers_VanishedContainer(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start a slot so a container exists in both runtime and Redis.
+	task := model.Task{
+		Command: model.CommandStart,
+		SlotID:  1,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	if err := env.mgr.HandleTask(ctx, task); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Simulate container vanishing from runtime.
+	for name := range env.runtime.containers {
+		delete(env.runtime.containers, name)
+	}
+
+	// Sync should detect the vanished container and clean up state.
+	env.mgr.SyncContainers(ctx)
+
+	// Verify db_write event was published with "error" status.
+	dbEvent, err := env.rdb.RPop(ctx, "db_write_requests").Result()
+	if err != nil {
+		t.Fatalf("expected db write event for vanished container: %v", err)
+	}
+
+	var event model.DBWriteEvent
+
+	if err := json.Unmarshal([]byte(dbEvent), &event); err != nil {
+		t.Fatalf("failed to parse db event: %v", err)
+	}
+
+	if event.Status != "error" {
+		t.Errorf("expected status error, got %s", event.Status)
+	}
+
+	if event.SlotID != 1 {
+		t.Errorf("expected slotID 1, got %d", event.SlotID)
+	}
+}

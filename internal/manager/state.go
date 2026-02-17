@@ -33,11 +33,25 @@ func NewState(rdb *redis.Client, maxSlots int) *State {
 }
 
 // RegisterSlot assigns a slot to a container in Redis.
-func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName string) {
+func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName string) error {
 	sid := strconv.Itoa(slotID)
-	s.rdb.HSet(ctx, slotToContainerKey, sid, containerName)
-	s.rdb.SAdd(ctx, containerSlotsKey(containerName), sid)
-	s.rdb.SAdd(ctx, activeContainersKey, containerName)
+
+	err := s.rdb.HSet(ctx, slotToContainerKey, sid, containerName).Err()
+	if err != nil {
+		return errors.Wrap(err, "setting slot-to-container mapping")
+	}
+
+	err = s.rdb.SAdd(ctx, containerSlotsKey(containerName), sid).Err()
+	if err != nil {
+		return errors.Wrap(err, "adding slot to container set")
+	}
+
+	err = s.rdb.SAdd(ctx, activeContainersKey, containerName).Err()
+	if err != nil {
+		return errors.Wrap(err, "adding container to active set")
+	}
+
+	return nil
 }
 
 // UnregisterSlot removes a slot from its container and returns the container name.
@@ -153,9 +167,18 @@ func (s *State) ContainerSlots(ctx context.Context, containerName string) ([]str
 }
 
 // RemoveContainer removes a container from the active set and deletes its slot set.
-func (s *State) RemoveContainer(ctx context.Context, containerName string) {
-	s.rdb.Del(ctx, containerSlotsKey(containerName))
-	s.rdb.SRem(ctx, activeContainersKey, containerName)
+func (s *State) RemoveContainer(ctx context.Context, containerName string) error {
+	err := s.rdb.Del(ctx, containerSlotsKey(containerName)).Err()
+	if err != nil {
+		return errors.Wrap(err, "deleting container slot set")
+	}
+
+	err = s.rdb.SRem(ctx, activeContainersKey, containerName).Err()
+	if err != nil {
+		return errors.Wrap(err, "removing container from active set")
+	}
+
+	return nil
 }
 
 // SlotExists checks if a slot is currently registered.

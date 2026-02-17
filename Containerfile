@@ -19,6 +19,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags
 
 FROM scratch
 WORKDIR /
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /workspace/redtailfox .
+USER 65532:65532
 
 ENTRYPOINT ["/redtailfox"]
