@@ -3,9 +3,10 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
@@ -23,33 +24,34 @@ const minArgs = 2
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	if len(os.Args) < minArgs {
-		fmt.Fprintln(os.Stderr, "usage: redtailfox <manager|worker|monitor>")
-		os.Exit(1)
-	}
-
-	ctx := context.Background()
-
-	var err error
-
-	switch os.Args[1] {
-	case "manager":
-		err = runManager(ctx)
-	case "worker":
-		err = runWorker(ctx)
-	case "monitor":
-		err = runMonitor(ctx)
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
-		os.Exit(1)
-	}
-
-	if err != nil {
+	if err := run(); err != nil {
 		slog.Error("fatal error", "error", err)
 		os.Exit(1)
 	}
 
 	slog.Info("shutdown complete")
+}
+
+func run() error {
+	if len(os.Args) < minArgs {
+		return errors.Wrap(errdefs.ErrInvalidConfig, "usage: redtailfox <manager|worker|monitor>")
+	}
+
+	// Signal context covers the entire lifecycle including startup
+	// so that SIGTERM/SIGINT can interrupt slow Redis or runtime init.
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	switch os.Args[1] {
+	case "manager":
+		return runManager(ctx)
+	case "worker":
+		return runWorker(ctx)
+	case "monitor":
+		return runMonitor(ctx)
+	default:
+		return errors.Wrapf(errdefs.ErrInvalidConfig, "unknown command: %s", os.Args[1])
+	}
 }
 
 func pingRedis(ctx context.Context, rdb *redis.Client) error {

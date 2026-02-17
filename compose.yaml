@@ -4,7 +4,7 @@ networks:
 
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:02f2cc4882f8bf87c79a220ac958f58c700bdec0dfb9b9ea61b62fb0e8f1bfcf
     networks:
       - foxnet
     ports:
@@ -19,7 +19,7 @@ services:
   # manage containers without full daemon control. Disable in development
   # by removing this service and mounting the socket directly into manager.
   socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:latest@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

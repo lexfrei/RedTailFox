@@ -61,7 +61,7 @@ All settings are read from environment variables.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `MAX_SLOTS_PER_CONTAINER` | `10` | Maximum slots per container |
-| `WORKER_IMAGE` | `fox_worker:latest` | Container image for workers |
+| `WORKER_IMAGE` | `redtailfox:latest` | Container image for workers |
 | `WORKER_CONTAINER_PREFIX` | `fox_worker` | Container name prefix |
 | `COMMAND_CHANNEL_PREFIX` | `COMMAND_CHANNEL` | Redis queue prefix for commands |
 | `WORKER_TASKS_LIST` | `manager_tasks` | Redis queue for incoming tasks |

@@ -92,6 +92,12 @@ func (w *Worker) HandleCommand(ctx context.Context, raw []byte) {
 		return
 	}
 
+	if task.SlotID <= 0 {
+		w.log.Error("invalid slot ID in command, dropping", "slotID", task.SlotID, "command", task.Command)
+
+		return
+	}
+
 	slotID := slotKey(task.SlotID)
 
 	switch task.Command {
