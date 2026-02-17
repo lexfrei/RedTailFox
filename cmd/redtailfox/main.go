@@ -69,6 +69,11 @@ func runManager(ctx context.Context) error {
 		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_IMAGE must not be empty")
 	}
 
+	if cfg.Redis.Password != "" {
+		slog.Warn("REDIS_PASSWORD is passed to worker containers as a plaintext environment variable; " +
+			"use secrets management (e.g. mounted files) for production deployments")
+	}
+
 	if cfg.MaxSlotsPerContainer <= 0 {
 		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
 	}

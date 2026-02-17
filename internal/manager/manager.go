@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	popTimeout           = 10 * time.Second
-	syncInterval         = 30 * time.Second
-	containerStopTimeout = 10 * time.Second
+	popTimeout               = 10 * time.Second
+	syncInterval             = 30 * time.Second
+	containerStopTimeout     = 10 * time.Second
+	containerShutdownTimeout = 30 * time.Second
 )
 
 // Config holds manager-specific settings.
@@ -111,6 +112,8 @@ func (m *Manager) Run(ctx context.Context) {
 	}()
 
 	wgr.Wait()
+
+	m.shutdownContainers()
 
 	m.log.Warn("manager stopped")
 }
@@ -241,6 +244,7 @@ func (m *Manager) HandleTask(ctx context.Context, task model.Task) error {
 	}
 }
 
+// handleStart registers and starts a slot. Caller must hold m.mu.
 func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 	config := task.Config
 
@@ -297,7 +301,7 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 }
 
 func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.RawMessage) (json.RawMessage, error) {
-	if len(config) > 0 {
+	if len(config) > 0 && string(config) != "null" {
 		if err := m.state.SaveSlotConfig(ctx, slotID, config); err != nil {
 			return nil, errors.Wrapf(err, "saving config for slot %d", slotID)
 		}
@@ -374,6 +378,7 @@ func (m *Manager) buildContainerEnv(idx int64, name, channel string) map[string]
 	}
 }
 
+// handleStop sends a stop command for a slot. Caller must hold m.mu.
 func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 	containerName, err := m.state.GetSlotContainer(ctx, task.SlotID)
 	if err != nil {
@@ -392,6 +397,7 @@ func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 	})
 }
 
+// handleRestartSlot unregisters and re-creates a slot. Caller must hold m.mu.
 func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error {
 	m.log.Warn("restarting slot by monitor signal", "slotID", task.SlotID)
 
@@ -455,6 +461,13 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		m.log.Error("failed to remove container", "container", containerName, "error", err)
 	}
 
+	// Verify the old container is gone before re-creating slots to prevent
+	// duplicate slot execution. If the container survived Stop+Remove, abort
+	// and let the monitor retry on the next health check cycle.
+	if m.isContainerRunning(ctx, containerName) {
+		return errors.Wrap(errdefs.ErrContainerStillRunning, containerName)
+	}
+
 	// Remove all container state atomically (slot set, active membership,
 	// command channel, and orphaned slot-to-container mappings) BEFORE
 	// re-creating slots so PickContainer does not select the dead container.
@@ -499,6 +512,7 @@ func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerRep
 	}
 }
 
+// handleSlotStopped processes a stopped/error report. Caller must hold m.mu.
 func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) {
 	// Reject reports without ContainerName — all legitimate workers always
 	// include it. An empty name would bypass the stale report check below.
@@ -698,6 +712,24 @@ func (m *Manager) sendCommand(ctx context.Context, containerName string, task mo
 	return nil
 }
 
+// isContainerRunning checks if a container is still present in the runtime.
+func (m *Manager) isContainerRunning(ctx context.Context, name string) bool {
+	containers, err := m.runtime.List(ctx, m.cfg.ContainerNamePrefix)
+	if err != nil {
+		m.log.Error("failed to check container status, assuming running", "error", err)
+
+		return true
+	}
+
+	for _, ctr := range containers {
+		if ctr.Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initiatedBy, errorText string) {
 	event := model.DBWriteEvent{
 		SlotID:      slotID,
@@ -717,5 +749,40 @@ func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initia
 	err = m.rdb.LPush(ctx, m.cfg.DBWriteQueue, data).Err()
 	if err != nil {
 		m.log.Error("failed to publish db write event", "error", err)
+	}
+}
+
+// shutdownContainers stops and removes all tracked worker containers during
+// graceful shutdown. Uses a background context since the signal context is
+// already cancelled at this point.
+func (m *Manager) shutdownContainers() {
+	ctx, cancel := context.WithTimeout(context.Background(), containerShutdownTimeout)
+	defer cancel()
+
+	containers, err := m.state.ActiveContainers(ctx)
+	if err != nil {
+		m.log.Error("shutdown: failed to list active containers", "error", err)
+
+		return
+	}
+
+	if len(containers) == 0 {
+		return
+	}
+
+	m.log.Info("shutdown: stopping worker containers", "count", len(containers))
+
+	for _, name := range containers {
+		if err := m.runtime.Stop(ctx, name, containerStopTimeout); err != nil {
+			m.log.Error("shutdown: failed to stop container", "container", name, "error", err)
+		}
+
+		if err := m.runtime.Remove(ctx, name); err != nil {
+			m.log.Error("shutdown: failed to remove container", "container", name, "error", err)
+		}
+
+		if err := m.state.RemoveContainer(ctx, name); err != nil {
+			m.log.Error("shutdown: failed to clean container state", "container", name, "error", err)
+		}
 	}
 }

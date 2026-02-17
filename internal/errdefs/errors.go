@@ -17,6 +17,9 @@ var (
 	// ErrContainerNotFound indicates a container lookup failed.
 	ErrContainerNotFound = errors.New("container not found")
 
+	// ErrContainerStillRunning indicates a container could not be stopped.
+	ErrContainerStillRunning = errors.New("container still running after stop attempt")
+
 	// ErrRuntimeUnavailable indicates the container runtime is not accessible.
 	ErrRuntimeUnavailable = errors.New("container runtime unavailable")
 )

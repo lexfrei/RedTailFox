@@ -41,6 +41,13 @@ type Config struct {
 }
 
 // Monitor periodically checks heartbeats and restarts unhealthy containers or slots.
+//
+// Failure counters (failures, slotFailures, containerRestarts) are kept in
+// memory and reset to zero when the monitor process restarts. This means
+// rate limits on restart attempts are per monitor lifetime, not cumulative.
+// A monitor restart allows previously exhausted containers to be restarted
+// again. For production use, operators should be aware that frequent monitor
+// restarts effectively disable the rate-limiting protection.
 type Monitor struct {
 	rdb               *redis.Client
 	cfg               Config

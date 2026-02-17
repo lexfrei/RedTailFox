@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Dark-F0X/RedTailFox/internal/container"
@@ -20,6 +21,8 @@ const statusRestarting = "restarting"
 type mockRuntime struct {
 	containers map[string]container.Container
 	runErr     error
+	stopErr    error
+	removeErr  error
 }
 
 func newMockRuntime() *mockRuntime {
@@ -38,12 +41,20 @@ func (m *mockRuntime) Run(_ context.Context, opts *container.RunOptions) (contai
 }
 
 func (m *mockRuntime) Stop(_ context.Context, name string, _ time.Duration) error {
+	if m.stopErr != nil {
+		return m.stopErr
+	}
+
 	delete(m.containers, name)
 
 	return nil
 }
 
 func (m *mockRuntime) Remove(_ context.Context, name string) error {
+	if m.removeErr != nil {
+		return m.removeErr
+	}
+
 	delete(m.containers, name)
 
 	return nil
@@ -485,5 +496,43 @@ func TestSyncContainers_VanishedContainer(t *testing.T) {
 
 	if event.SlotID != 1 {
 		t.Errorf("expected slotID 1, got %d", event.SlotID)
+	}
+}
+
+func TestHandleRestartContainer_StopFailure(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start a slot so a container exists.
+	task := model.Task{
+		Command: model.CommandStart,
+		SlotID:  1,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	if err := env.mgr.HandleTask(ctx, task); err != nil {
+		t.Fatalf("failed to start slot: %v", err)
+	}
+
+	// Drain command queue.
+	env.rdb.RPop(ctx, "COMMAND_CHANNEL_1")
+
+	// Make Stop and Remove fail so the container stays running.
+	env.runtime.stopErr = errors.New("stop timeout")
+	env.runtime.removeErr = errors.New("container is running")
+
+	restartTask := model.Task{
+		Command:       model.CommandRestartContainer,
+		ContainerName: testContainerName,
+	}
+
+	err := env.mgr.HandleTask(ctx, restartTask)
+	if err == nil {
+		t.Fatal("expected error when container cannot be stopped")
+	}
+
+	// Container should still be running — slots must NOT be re-created.
+	if len(env.runtime.containers) != 1 {
+		t.Errorf("expected container to still be running, got %d containers", len(env.runtime.containers))
 	}
 }

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	testTasksQueue    = "autoreply_queue"
+	testTasksQueue    = "manager_tasks"
 	testContainerName = "fox_worker_1"
 )
 
