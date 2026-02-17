@@ -19,6 +19,8 @@ services:
       context: .
       dockerfile: Containerfile
     command: ["/redtailfox", "manager"]
+    # Manager needs access to the container runtime socket to spawn workers.
+    user: "0:0"
     networks:
       - foxnet
     depends_on:

@@ -24,7 +24,7 @@ func newMockRuntime() *mockRuntime {
 	return &mockRuntime{containers: make(map[string]container.Container)}
 }
 
-func (m *mockRuntime) Run(_ context.Context, opts container.RunOptions) (container.Container, error) {
+func (m *mockRuntime) Run(_ context.Context, opts *container.RunOptions) (container.Container, error) {
 	if m.runErr != nil {
 		return container.Container{}, m.runErr
 	}

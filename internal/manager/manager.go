@@ -302,12 +302,13 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 	opts := container.RunOptions{
 		Image:         m.cfg.WorkerImage,
 		Name:          containerName,
+		Command:       []string{"worker"},
 		RestartPolicy: "unless-stopped",
 		Env:           m.buildContainerEnv(idx, containerName, channel),
 		Network:       m.cfg.WorkerNetwork,
 	}
 
-	if _, err := m.runtime.Run(ctx, opts); err != nil {
+	if _, err := m.runtime.Run(ctx, &opts); err != nil {
 		m.publishDBWrite(ctx, slotID, "error", "manager", fmt.Sprintf("container_start_fail: %v", err))
 
 		return "", errors.Wrap(err, "starting container")
@@ -375,6 +376,10 @@ func (m *Manager) handleRestartSlot(ctx context.Context, task model.Task) error 
 // HandleWorkerReport, and the slots are already unregistered before re-creation.
 func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) error {
 	containerName := task.ContainerName
+	if containerName == "" {
+		return errors.Wrap(errdefs.ErrContainerNotFound, "empty container name in restart task")
+	}
+
 	m.log.Error("full container restart", "container", containerName)
 
 	slots, err := m.state.ContainerSlots(ctx, containerName)
@@ -391,8 +396,9 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		m.log.Error("failed to remove container", "container", containerName, "error", err)
 	}
 
-	// Remove container state BEFORE re-creating slots so PickContainer does not
-	// select the dead container for new slot assignments.
+	// Remove all container state atomically (slot set, active membership,
+	// command channel, and orphaned slot-to-container mappings) BEFORE
+	// re-creating slots so PickContainer does not select the dead container.
 	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
 		m.log.Error("failed to remove container state", "container", containerName, "error", err)
 	}
@@ -403,10 +409,6 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 			m.log.Error("invalid slot ID in container set", "sid", sid, "error", err)
 
 			continue
-		}
-
-		if _, err := m.state.UnregisterSlot(ctx, slotID); err != nil {
-			m.log.Warn("slot not found during container restart", "slotID", slotID)
 		}
 
 		m.publishDBWrite(ctx, slotID, "restarting", "monitor", "container_freeze")

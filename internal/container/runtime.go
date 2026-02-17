@@ -23,6 +23,9 @@ type RunOptions struct {
 	// Name is the desired container name.
 	Name string
 
+	// Command overrides the container entrypoint arguments (e.g., ["worker"]).
+	Command []string
+
 	// Env is a map of environment variables to pass to the container.
 	Env map[string]string
 
@@ -36,7 +39,7 @@ type RunOptions struct {
 // Runtime defines operations for managing OCI-compatible containers.
 type Runtime interface {
 	// Run creates and starts a new container with the given options.
-	Run(ctx context.Context, opts RunOptions) (Container, error)
+	Run(ctx context.Context, opts *RunOptions) (Container, error)
 
 	// Stop gracefully stops a container by name within the given timeout.
 	Stop(ctx context.Context, name string, timeout time.Duration) error

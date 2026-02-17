@@ -34,7 +34,7 @@ func NewOCIRuntime(ctx context.Context, log *slog.Logger) (*OCIRuntime, error) {
 }
 
 // Run creates and starts a new container.
-func (r *OCIRuntime) Run(ctx context.Context, opts RunOptions) (Container, error) {
+func (r *OCIRuntime) Run(ctx context.Context, opts *RunOptions) (Container, error) {
 	hostCfg := &apitypes.HostConfig{
 		RestartPolicy: apitypes.RestartPolicy{
 			Name: apitypes.RestartPolicyMode(opts.RestartPolicy),
@@ -49,6 +49,7 @@ func (r *OCIRuntime) Run(ctx context.Context, opts RunOptions) (Container, error
 		Name:  opts.Name,
 		Image: opts.Image,
 		Config: &apitypes.Config{
+			Cmd: opts.Command,
 			Env: makeEnvList(opts.Env),
 		},
 		HostConfig: hostCfg,
