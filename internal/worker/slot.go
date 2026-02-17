@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lexfrei/RedTailFox/internal/model"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
 )
 
 // Slot represents a single work unit running inside a container.

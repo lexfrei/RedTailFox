@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lexfrei/RedTailFox/internal/model"
-	"github.com/lexfrei/RedTailFox/internal/worker"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
+	"github.com/Dark-F0X/RedTailFox/internal/worker"
 )
 
 func testLogger() *slog.Logger {

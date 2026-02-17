@@ -9,9 +9,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lexfrei/RedTailFox/internal/container"
-	"github.com/lexfrei/RedTailFox/internal/manager"
-	"github.com/lexfrei/RedTailFox/internal/model"
+	"github.com/Dark-F0X/RedTailFox/internal/container"
+	"github.com/Dark-F0X/RedTailFox/internal/manager"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
 )
 
 // mockRuntime implements container.Runtime for testing.

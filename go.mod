@@ -1,4 +1,4 @@
-module github.com/lexfrei/RedTailFox
+module github.com/Dark-F0X/RedTailFox
 
 go 1.26
 

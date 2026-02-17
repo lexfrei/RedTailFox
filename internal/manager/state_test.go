@@ -7,7 +7,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lexfrei/RedTailFox/internal/manager"
+	"github.com/Dark-F0X/RedTailFox/internal/manager"
 )
 
 const testContainerName = "fox_worker_1"

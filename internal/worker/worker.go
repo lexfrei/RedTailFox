@@ -13,7 +13,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lexfrei/RedTailFox/internal/model"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
 )
 
 const (

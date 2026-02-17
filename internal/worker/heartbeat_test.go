@@ -8,8 +8,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lexfrei/RedTailFox/internal/model"
-	"github.com/lexfrei/RedTailFox/internal/worker"
+	"github.com/Dark-F0X/RedTailFox/internal/model"
+	"github.com/Dark-F0X/RedTailFox/internal/worker"
 )
 
 const (

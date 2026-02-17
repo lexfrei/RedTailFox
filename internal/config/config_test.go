@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lexfrei/RedTailFox/internal/config"
+	"github.com/Dark-F0X/RedTailFox/internal/config"
 )
 
 func TestLoadManagerFromEnv_Defaults(t *testing.T) {
