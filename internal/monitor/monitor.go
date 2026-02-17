@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +22,14 @@ const (
 	maxSlotRestarts      = 3
 	maxContainerRestarts = 5
 	defaultCheckInterval = 10 * time.Second
+)
+
+// Redis key prefixes for persisted failure counters.
+const (
+	failureKeyPrefix          = "monitor:failures:"
+	slotFailureKeyPrefix      = "monitor:slot_failures:"
+	containerRestartKeyPrefix = "monitor:restarts:"
+	counterTTL                = time.Hour
 )
 
 // Config holds monitor settings.
@@ -42,19 +49,12 @@ type Config struct {
 
 // Monitor periodically checks heartbeats and restarts unhealthy containers or slots.
 //
-// Failure counters (failures, slotFailures, containerRestarts) are kept in
-// memory and reset to zero when the monitor process restarts. This means
-// rate limits on restart attempts are per monitor lifetime, not cumulative.
-// A monitor restart allows previously exhausted containers to be restarted
-// again. For production use, operators should be aware that frequent monitor
-// restarts effectively disable the rate-limiting protection.
+// Failure counters are persisted in Redis so they survive monitor restarts.
+// Counter keys use a TTL to prevent unbounded growth from orphaned entries.
 type Monitor struct {
-	rdb               *redis.Client
-	cfg               Config
-	log               *slog.Logger
-	failures          map[string]int
-	slotFailures      map[string]int
-	containerRestarts map[string]int
+	rdb *redis.Client
+	cfg Config
+	log *slog.Logger
 }
 
 // New creates a new Monitor.
@@ -64,12 +64,9 @@ func New(rdb *redis.Client, cfg Config, log *slog.Logger) *Monitor {
 	}
 
 	return &Monitor{
-		rdb:               rdb,
-		cfg:               cfg,
-		log:               log,
-		failures:          make(map[string]int),
-		slotFailures:      make(map[string]int),
-		containerRestarts: make(map[string]int),
+		rdb: rdb,
+		cfg: cfg,
+		log: log,
 	}
 }
 
@@ -99,9 +96,8 @@ func (mon *Monitor) Run(ctx context.Context) {
 // Not safe for concurrent use — must be called from a single goroutine.
 func (mon *Monitor) Step(ctx context.Context) {
 	containers := mon.activeContainerNames(ctx)
-	seenContainers := mon.checkHeartbeats(ctx, containers)
-	activeContainers := mon.checkMissingContainers(ctx, containers, seenContainers)
-	mon.pruneFailures(seenContainers, activeContainers)
+	seen := mon.checkHeartbeats(ctx, containers)
+	mon.checkMissingContainers(ctx, containers, seen)
 }
 
 func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) map[string]bool {
@@ -125,8 +121,10 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) ma
 		}
 
 		// Heartbeat is fresh — reset failure and restart counters.
-		delete(mon.failures, hbt.Container)
-		delete(mon.containerRestarts, hbt.Container)
+		mon.resetCounters(ctx,
+			failureKeyPrefix+hbt.Container,
+			containerRestartKeyPrefix+hbt.Container,
+		)
 
 		mon.checkSlots(ctx, hbt.Container, hbt.Slots, now)
 	}
@@ -176,8 +174,8 @@ func (mon *Monitor) handleStaleContainer(ctx context.Context, containerName stri
 // maybeRestartContainer applies the failure counter + restart rate limit
 // and sends a restart_container task when thresholds are met.
 func (mon *Monitor) maybeRestartContainer(ctx context.Context, containerName, reason string) {
-	mon.failures[containerName]++
-	count := mon.failures[containerName]
+	failKey := failureKeyPrefix + containerName
+	count := mon.incrCounter(ctx, failKey)
 
 	if count < failureThreshold {
 		mon.log.Warn("container health check failed",
@@ -190,7 +188,9 @@ func (mon *Monitor) maybeRestartContainer(ctx context.Context, containerName, re
 		return
 	}
 
-	restarts := mon.containerRestarts[containerName]
+	restartKey := containerRestartKeyPrefix + containerName
+	restarts := mon.getCounter(ctx, restartKey)
+
 	if restarts >= maxContainerRestarts {
 		mon.log.Error("container exceeded max restart attempts, manual intervention needed",
 			"container", containerName,
@@ -201,7 +201,7 @@ func (mon *Monitor) maybeRestartContainer(ctx context.Context, containerName, re
 		return
 	}
 
-	mon.containerRestarts[containerName]++
+	mon.incrCounter(ctx, restartKey)
 
 	mon.log.Error("container unhealthy, restarting",
 		"container", containerName,
@@ -216,7 +216,7 @@ func (mon *Monitor) maybeRestartContainer(ctx context.Context, containerName, re
 		InitiatedBy:   "monitor",
 	})
 
-	delete(mon.failures, containerName)
+	mon.resetCounters(ctx, failKey)
 }
 
 func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots []model.SlotHeartbeat, now int64) {
@@ -238,7 +238,7 @@ func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots 
 		}
 
 		// Slot is healthy — reset its failure counter.
-		delete(mon.slotFailures, key)
+		mon.resetCounters(ctx, slotFailureKeyPrefix+key)
 	}
 }
 
@@ -248,8 +248,8 @@ func (mon *Monitor) handleUnhealthySlot(
 	slotID int,
 	reason string,
 ) {
-	mon.slotFailures[key]++
-	count := mon.slotFailures[key]
+	redisKey := slotFailureKeyPrefix + key
+	count := mon.incrCounter(ctx, redisKey)
 
 	if count < failureThreshold {
 		mon.log.Warn("slot health check failed",
@@ -289,59 +289,13 @@ func slotFailureKey(containerName string, slotID int) string {
 	return fmt.Sprintf("%s:%d", containerName, slotID)
 }
 
-func (mon *Monitor) checkMissingContainers(ctx context.Context, containers []string, seen map[string]bool) map[string]bool {
-	active := make(map[string]bool)
-
+func (mon *Monitor) checkMissingContainers(ctx context.Context, containers []string, seen map[string]bool) {
 	for _, name := range containers {
-		active[name] = true
-
 		if seen[name] {
 			continue
 		}
 
 		mon.maybeRestartContainer(ctx, name, "missing heartbeat")
-	}
-
-	return active
-}
-
-// pruneFailures removes failure counters for containers (and their slots)
-// that are no longer tracked in heartbeat keys or the active containers set.
-func (mon *Monitor) pruneFailures(seen, active map[string]bool) {
-	for name := range mon.failures {
-		if seen[name] || active[name] {
-			continue
-		}
-
-		delete(mon.failures, name)
-	}
-
-	// Prune slot failures for containers that disappeared.
-	for key := range mon.slotFailures {
-		// Key format is "containerName:slotID". Use LastIndex because
-		// container names may contain colons.
-		idx := strings.LastIndex(key, ":")
-		if idx < 0 {
-			delete(mon.slotFailures, key)
-
-			continue
-		}
-
-		containerName := key[:idx]
-		if seen[containerName] || active[containerName] {
-			continue
-		}
-
-		delete(mon.slotFailures, key)
-	}
-
-	// Prune container restart counters for vanished containers.
-	for name := range mon.containerRestarts {
-		if seen[name] || active[name] {
-			continue
-		}
-
-		delete(mon.containerRestarts, name)
 	}
 }
 
@@ -365,5 +319,42 @@ func (mon *Monitor) sendTask(ctx context.Context, task *model.Task) {
 	err = mon.rdb.LPush(ctx, mon.cfg.TasksQueue, data).Err()
 	if err != nil {
 		mon.log.Error("failed to send task", "error", err)
+	}
+}
+
+// incrCounter atomically increments a Redis counter and refreshes its TTL.
+// Returns the new value, or 0 on error.
+func (mon *Monitor) incrCounter(ctx context.Context, key string) int {
+	val, err := mon.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		mon.log.Error("failed to increment counter", "key", key, "error", err)
+
+		return 0
+	}
+
+	mon.rdb.Expire(ctx, key, counterTTL)
+
+	return int(val)
+}
+
+// getCounter reads a Redis counter value. Returns 0 on error or missing key.
+func (mon *Monitor) getCounter(ctx context.Context, key string) int {
+	val, err := mon.rdb.Get(ctx, key).Int()
+	if err != nil {
+		return 0
+	}
+
+	return val
+}
+
+// resetCounters deletes the given Redis counter keys.
+func (mon *Monitor) resetCounters(ctx context.Context, keys ...string) {
+	if len(keys) == 0 {
+		return
+	}
+
+	err := mon.rdb.Del(ctx, keys...).Err()
+	if err != nil {
+		mon.log.Error("failed to reset counters", "keys", keys, "error", err)
 	}
 }

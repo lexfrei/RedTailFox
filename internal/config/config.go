@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -20,6 +21,12 @@ type Redis struct {
 	Port     string
 	Password string
 }
+
+const (
+	defaultDialTimeout  = 5 * time.Second
+	defaultReadTimeout  = 3 * time.Second
+	defaultWriteTimeout = 3 * time.Second
+)
 
 // Validate checks that Redis connection parameters are well-formed.
 func (r Redis) Validate() error {
@@ -47,8 +54,11 @@ func (r Redis) Validate() error {
 // Options returns go-redis options derived from this config.
 func (r Redis) Options() *redis.Options {
 	return &redis.Options{
-		Addr:     net.JoinHostPort(r.Host, r.Port),
-		Password: r.Password,
+		Addr:         net.JoinHostPort(r.Host, r.Port),
+		Password:     r.Password,
+		DialTimeout:  defaultDialTimeout,
+		ReadTimeout:  defaultReadTimeout,
+		WriteTimeout: defaultWriteTimeout,
 	}
 }
 
@@ -83,20 +93,48 @@ type Monitor struct {
 }
 
 func loadRedis() Redis {
+	password := envOrDefault("REDIS_PASSWORD", "")
+	if password == "" {
+		password = loadPasswordFile()
+	}
+
 	return Redis{
 		Host:     envOrDefault("REDIS_HOST", "localhost"),
 		Port:     envOrDefault("REDIS_PORT", "6379"),
-		Password: envOrDefault("REDIS_PASSWORD", ""),
+		Password: password,
 	}
 }
 
+// loadPasswordFile reads a password from the file pointed to by
+// REDIS_PASSWORD_FILE. Returns empty string if the env var is unset.
+func loadPasswordFile() string {
+	path := os.Getenv("REDIS_PASSWORD_FILE")
+	if path == "" {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.Error("failed to read REDIS_PASSWORD_FILE", "path", path, "error", err)
+
+		return ""
+	}
+
+	return strings.TrimSpace(string(data))
+}
+
 // LoadManagerFromEnv creates Manager config from environment variables.
-func LoadManagerFromEnv() Manager {
+func LoadManagerFromEnv() (Manager, error) {
 	const defaultMaxSlots = 10
+
+	maxSlots, err := envInt("MAX_SLOTS_PER_CONTAINER", defaultMaxSlots)
+	if err != nil {
+		return Manager{}, err
+	}
 
 	return Manager{
 		Redis:                loadRedis(),
-		MaxSlotsPerContainer: envIntOrDefault("MAX_SLOTS_PER_CONTAINER", defaultMaxSlots),
+		MaxSlotsPerContainer: maxSlots,
 		WorkerImage:          envOrDefault("WORKER_IMAGE", "fox_worker:latest"),
 		ContainerNamePrefix:  envOrDefault("WORKER_CONTAINER_PREFIX", "fox_worker"),
 		CommandChannelPrefix: envOrDefault("COMMAND_CHANNEL_PREFIX", "COMMAND_CHANNEL"),
@@ -104,7 +142,7 @@ func LoadManagerFromEnv() Manager {
 		ReportsQueue:         envOrDefault("WORKER_REPORTS_CHANNEL", "worker_reports"),
 		DBWriteQueue:         envOrDefault("DB_WRITE_QUEUE", "db_write_requests"),
 		WorkerNetwork:        envOrDefault("WORKER_NETWORK", ""),
-	}
+	}, nil
 }
 
 // LoadWorkerFromEnv creates Worker config from environment variables.
@@ -118,22 +156,35 @@ func LoadWorkerFromEnv() Worker {
 }
 
 // LoadMonitorFromEnv creates Monitor config from environment variables.
-func LoadMonitorFromEnv() Monitor {
+func LoadMonitorFromEnv() (Monitor, error) {
 	const (
 		defaultCheckInterval = 10
 		defaultMaxSilence    = 500
 		defaultSlotIdle      = 600
 	)
 
-	interval := envIntOrDefault("CHECK_INTERVAL", defaultCheckInterval)
+	interval, err := envInt("CHECK_INTERVAL", defaultCheckInterval)
+	if err != nil {
+		return Monitor{}, err
+	}
+
+	maxSilence, err := envInt("MAX_SILENCE_SECONDS", defaultMaxSilence)
+	if err != nil {
+		return Monitor{}, err
+	}
+
+	slotIdle, err := envInt("SLOT_IDLE_TIMEOUT", defaultSlotIdle)
+	if err != nil {
+		return Monitor{}, err
+	}
 
 	return Monitor{
 		Redis:             loadRedis(),
 		CheckInterval:     time.Duration(interval) * time.Second,
-		MaxSilenceSeconds: int64(envIntOrDefault("MAX_SILENCE_SECONDS", defaultMaxSilence)),
-		SlotIdleTimeout:   int64(envIntOrDefault("SLOT_IDLE_TIMEOUT", defaultSlotIdle)),
+		MaxSilenceSeconds: int64(maxSilence),
+		SlotIdleTimeout:   int64(slotIdle),
 		TasksQueue:        envOrDefault("WORKER_TASKS_LIST", "manager_tasks"),
-	}
+	}, nil
 }
 
 func envOrDefault(key, fallback string) string {
@@ -145,23 +196,19 @@ func envOrDefault(key, fallback string) string {
 	return val
 }
 
-func envIntOrDefault(key string, fallback int) int {
+// envInt reads an integer environment variable. Returns fallback when the
+// variable is unset or empty, and an error when the value is not a valid integer.
+func envInt(key string, fallback int) (int, error) {
 	val, ok := os.LookupEnv(key)
 	if !ok || val == "" {
-		return fallback
+		return fallback, nil
 	}
 
 	parsed, err := strconv.Atoi(val)
 	if err != nil {
-		slog.Error("invalid integer env var, using default",
-			"key", key,
-			"value", val,
-			"default", fallback,
-			"error", err,
-		)
-
-		return fallback
+		return 0, errors.Wrapf(errdefs.ErrInvalidConfig,
+			"env var %s has invalid integer value %q", key, val)
 	}
 
-	return parsed
+	return parsed, nil
 }

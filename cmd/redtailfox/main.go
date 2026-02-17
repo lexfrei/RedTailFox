@@ -48,6 +48,8 @@ func main() {
 		slog.Error("fatal error", "error", err)
 		os.Exit(1)
 	}
+
+	slog.Info("shutdown complete")
 }
 
 func pingRedis(ctx context.Context, rdb *redis.Client) error {
@@ -59,7 +61,10 @@ func pingRedis(ctx context.Context, rdb *redis.Client) error {
 }
 
 func runManager(ctx context.Context) error {
-	cfg := config.LoadManagerFromEnv()
+	cfg, err := config.LoadManagerFromEnv()
+	if err != nil {
+		return errors.Wrap(err, "loading manager config")
+	}
 
 	if err := cfg.Redis.Validate(); err != nil {
 		return errors.Wrap(err, "validating redis config")
@@ -69,13 +74,13 @@ func runManager(ctx context.Context) error {
 		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_IMAGE must not be empty")
 	}
 
-	if cfg.Redis.Password != "" {
-		slog.Warn("REDIS_PASSWORD is passed to worker containers as a plaintext environment variable; " +
-			"use secrets management (e.g. mounted files) for production deployments")
-	}
-
 	if cfg.MaxSlotsPerContainer <= 0 {
 		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
+	}
+
+	if cfg.Redis.Password != "" {
+		slog.Warn("REDIS_PASSWORD is passed to worker containers as a plaintext environment variable; " +
+			"use secrets management (e.g. mounted files via REDIS_PASSWORD_FILE) for production deployments")
 	}
 
 	rdb := redis.NewClient(cfg.Redis.Options())
@@ -130,7 +135,10 @@ func runWorker(ctx context.Context) error {
 }
 
 func runMonitor(ctx context.Context) error {
-	cfg := config.LoadMonitorFromEnv()
+	cfg, err := config.LoadMonitorFromEnv()
+	if err != nil {
+		return errors.Wrap(err, "loading monitor config")
+	}
 
 	if err := cfg.Redis.Validate(); err != nil {
 		return errors.Wrap(err, "validating redis config")

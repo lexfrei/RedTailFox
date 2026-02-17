@@ -17,9 +17,8 @@ COPY internal/ internal/
 # Build
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o redtailfox ./cmd/redtailfox
 
-FROM scratch
+FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /workspace/redtailfox .
 # Default to non-root. The manager service overrides this to root via
 # compose.yaml "user: 0:0" because it needs access to the container

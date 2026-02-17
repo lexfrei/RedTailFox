@@ -302,6 +302,11 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 
 func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.RawMessage) (json.RawMessage, error) {
 	if len(config) > 0 && string(config) != "null" {
+		if !json.Valid(config) {
+			return nil, errors.Wrapf(errdefs.ErrInvalidConfig,
+				"invalid JSON config for slot %d", slotID)
+		}
+
 		if err := m.state.SaveSlotConfig(ctx, slotID, config); err != nil {
 			return nil, errors.Wrapf(err, "saving config for slot %d", slotID)
 		}
@@ -317,6 +322,11 @@ func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.Raw
 		}
 
 		return nil, errors.Wrapf(err, "loading config for slot %d", slotID)
+	}
+
+	// Re-save to refresh TTL so the config survives additional restart cycles.
+	if err := m.state.SaveSlotConfig(ctx, slotID, stored); err != nil {
+		m.log.Error("failed to refresh config TTL", "slotID", slotID, "error", err)
 	}
 
 	return stored, nil

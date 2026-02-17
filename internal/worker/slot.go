@@ -190,7 +190,7 @@ func (s *Slot) run(parent context.Context) {
 
 			return
 		case <-ticker.C:
-			s.tick(ctx, &lastCheck, int64(checkInterval))
+			s.tick(ctx, &lastCheck, checkInterval)
 		}
 	}
 }
@@ -260,11 +260,11 @@ func (s *Slot) backoff(ctx context.Context) {
 	}
 }
 
-func extractCheckInterval(config json.RawMessage, log *slog.Logger) int {
+func extractCheckInterval(config json.RawMessage, log *slog.Logger) int64 {
 	var cfg struct {
 		Bot struct {
-			CheckInterval int `json:"checkInterval"`
-			Interval      int `json:"interval"`
+			CheckInterval int64 `json:"checkInterval"`
+			Interval      int64 `json:"interval"`
 		} `json:"bot"`
 	}
 
