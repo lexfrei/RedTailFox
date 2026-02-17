@@ -55,3 +55,4 @@ services:
       CHECK_INTERVAL: "10"
       MAX_SILENCE_SECONDS: "500"
       SLOT_IDLE_TIMEOUT: "600"
+      WORKER_TASKS_LIST: "manager_tasks"

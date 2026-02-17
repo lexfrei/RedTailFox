@@ -8,7 +8,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cockroachdb/errors"
 	redis "github.com/redis/go-redis/v9"
+
+	"github.com/Dark-F0X/RedTailFox/internal/errdefs"
 )
 
 // Redis holds connection parameters for Redis.
@@ -16,6 +19,25 @@ type Redis struct {
 	Host     string
 	Port     string
 	Password string
+}
+
+// Validate checks that Redis connection parameters are well-formed.
+func (r Redis) Validate() error {
+	const (
+		minPort = 1
+		maxPort = 65535
+	)
+
+	port, err := strconv.Atoi(r.Port)
+	if err != nil {
+		return errors.Wrapf(errdefs.ErrInvalidConfig, "invalid redis port %q", r.Port)
+	}
+
+	if port < minPort || port > maxPort {
+		return errors.Wrapf(errdefs.ErrInvalidConfig, "redis port %d out of range [%d, %d]", port, minPort, maxPort)
+	}
+
+	return nil
 }
 
 // Options returns go-redis options derived from this config.

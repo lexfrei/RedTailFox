@@ -59,13 +59,23 @@ func (w *Worker) Run(ctx context.Context) {
 
 	hbt := NewHeartbeat(w.rdb, w.containerName, w.slotList, w.log)
 
-	go hbt.Run(ctx)
+	hbtDone := make(chan struct{})
+
+	go func() {
+		defer close(hbtDone)
+
+		hbt.Run(ctx)
+	}()
 
 	w.log.Info("worker ready", "container", w.containerName, "channel", w.commandCh)
 	w.commandLoop(ctx)
 
 	w.log.Info("shutting down, stopping all slots")
 	w.stopAllSlots() //nolint:contextcheck // Intentionally uses background context for shutdown reports.
+
+	// Wait for the heartbeat goroutine to finish so it does not publish
+	// stale snapshots after slots have been torn down.
+	<-hbtDone
 }
 
 // HandleCommand processes a single command message. Exported for testing.

@@ -486,30 +486,37 @@ func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerRep
 }
 
 func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) {
+	// Reject reports without ContainerName — all legitimate workers always
+	// include it. An empty name would bypass the stale report check below.
+	if report.ContainerName == "" {
+		m.log.Warn("ignoring report without container name",
+			"slotID", report.SlotID, "status", report.Status)
+
+		return
+	}
+
 	// Guard against stale reports from a dying worker: if the slot was
 	// re-registered to a different container (e.g. after container restart),
 	// the report's container name won't match. Skip unregistration to
 	// prevent the new assignment from being destroyed.
 	// On Redis error, skip processing to avoid accidentally destroying
 	// valid slot assignments.
-	if report.ContainerName != "" {
-		currentContainer, err := m.state.GetSlotContainer(ctx, report.SlotID)
-		if err != nil && !errors.Is(err, errdefs.ErrSlotNotFound) {
-			m.log.Error("failed to verify slot container for report, skipping",
-				"slotID", report.SlotID, "error", err)
+	currentContainer, err := m.state.GetSlotContainer(ctx, report.SlotID)
+	if err != nil && !errors.Is(err, errdefs.ErrSlotNotFound) {
+		m.log.Error("failed to verify slot container for report, skipping",
+			"slotID", report.SlotID, "error", err)
 
-			return
-		}
+		return
+	}
 
-		if err == nil && currentContainer != report.ContainerName {
-			m.log.Warn("ignoring stale report from old container",
-				"slotID", report.SlotID,
-				"reportContainer", report.ContainerName,
-				"currentContainer", currentContainer,
-			)
+	if err == nil && currentContainer != report.ContainerName {
+		m.log.Warn("ignoring stale report from old container",
+			"slotID", report.SlotID,
+			"reportContainer", report.ContainerName,
+			"currentContainer", currentContainer,
+		)
 
-			return
-		}
+		return
 	}
 
 	containerName, err := m.state.UnregisterSlot(ctx, report.SlotID)
@@ -551,10 +558,11 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 
 	if err := m.runtime.Remove(ctx, containerName); err != nil {
 		m.log.Error("failed to remove empty container", "container", containerName, "error", err)
-
-		return
 	}
 
+	// Always clean up Redis state even if runtime.Remove failed — a stopped
+	// container lingering in the active set would let PickContainer send new
+	// slots to a dead container.
 	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
 		m.log.Error("failed to remove container state", "container", containerName, "error", err)
 	}

@@ -4,8 +4,10 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +20,7 @@ const (
 	heartbeatKeyPrefix   = "hb:container:"
 	activeContainersKey  = "manager:active_containers"
 	failureThreshold     = 2
+	slotRestartThreshold = 3
 	heartbeatKeyPattern  = heartbeatKeyPrefix + "*"
 	defaultCheckInterval = 10 * time.Second
 )
@@ -39,10 +42,11 @@ type Config struct {
 
 // Monitor periodically checks heartbeats and restarts unhealthy containers or slots.
 type Monitor struct {
-	rdb      *redis.Client
-	cfg      Config
-	log      *slog.Logger
-	failures map[string]int
+	rdb          *redis.Client
+	cfg          Config
+	log          *slog.Logger
+	failures     map[string]int
+	slotFailures map[string]int
 }
 
 // New creates a new Monitor.
@@ -52,10 +56,11 @@ func New(rdb *redis.Client, cfg Config, log *slog.Logger) *Monitor {
 	}
 
 	return &Monitor{
-		rdb:      rdb,
-		cfg:      cfg,
-		log:      log,
-		failures: make(map[string]int),
+		rdb:          rdb,
+		cfg:          cfg,
+		log:          log,
+		failures:     make(map[string]int),
+		slotFailures: make(map[string]int),
 	}
 }
 
@@ -191,28 +196,58 @@ func (mon *Monitor) handleStaleContainer(ctx context.Context, containerName stri
 func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots []model.SlotHeartbeat, now int64) {
 	for idx := range slots {
 		slot := &slots[idx]
+		key := slotFailureKey(containerName, slot.SlotID)
 
 		if !slot.Running {
-			mon.log.Warn("slot not running, restarting",
-				"container", containerName,
-				"slotID", slot.SlotID,
-			)
-
-			mon.sendSlotRestart(ctx, containerName, slot.SlotID)
+			mon.handleUnhealthySlot(ctx, key, containerName, slot.SlotID, "slot not running")
 
 			continue
 		}
 
 		if now-slot.LastActive > mon.cfg.SlotIdleTimeout {
-			mon.log.Warn("slot idle too long, restarting",
-				"container", containerName,
-				"slotID", slot.SlotID,
-				"idleSeconds", now-slot.LastActive,
-			)
+			mon.handleUnhealthySlot(ctx, key, containerName, slot.SlotID,
+				fmt.Sprintf("slot idle %ds", now-slot.LastActive))
 
-			mon.sendSlotRestart(ctx, containerName, slot.SlotID)
+			continue
 		}
+
+		// Slot is healthy — reset its failure counter.
+		delete(mon.slotFailures, key)
 	}
+}
+
+func (mon *Monitor) handleUnhealthySlot(
+	ctx context.Context,
+	key, containerName string,
+	slotID int,
+	reason string,
+) {
+	mon.slotFailures[key]++
+	count := mon.slotFailures[key]
+
+	if count > slotRestartThreshold {
+		mon.log.Error("slot restart threshold exceeded, skipping further restarts",
+			"container", containerName,
+			"slotID", slotID,
+			"failures", count,
+			"reason", reason,
+		)
+
+		return
+	}
+
+	mon.log.Warn("unhealthy slot, sending restart",
+		"container", containerName,
+		"slotID", slotID,
+		"failures", count,
+		"reason", reason,
+	)
+
+	mon.sendSlotRestart(ctx, containerName, slotID)
+}
+
+func slotFailureKey(containerName string, slotID int) string {
+	return fmt.Sprintf("%s:%d", containerName, slotID)
 }
 
 func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]bool) map[string]bool {
@@ -261,8 +296,8 @@ func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]
 	return active
 }
 
-// pruneFailures removes failure counters for containers that are no longer
-// tracked in heartbeat keys or the active containers set.
+// pruneFailures removes failure counters for containers (and their slots)
+// that are no longer tracked in heartbeat keys or the active containers set.
 func (mon *Monitor) pruneFailures(seen, active map[string]bool) {
 	for name := range mon.failures {
 		if seen[name] || active[name] {
@@ -270,6 +305,17 @@ func (mon *Monitor) pruneFailures(seen, active map[string]bool) {
 		}
 
 		delete(mon.failures, name)
+	}
+
+	// Prune slot failures for containers that disappeared.
+	for key := range mon.slotFailures {
+		// Key format is "containerName:slotID".
+		containerName, _, _ := strings.Cut(key, ":")
+		if seen[containerName] || active[containerName] {
+			continue
+		}
+
+		delete(mon.slotFailures, key)
 	}
 }
 

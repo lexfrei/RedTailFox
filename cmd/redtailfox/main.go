@@ -61,6 +61,10 @@ func pingRedis(ctx context.Context, rdb *redis.Client) error {
 func runManager(ctx context.Context) error {
 	cfg := config.LoadManagerFromEnv()
 
+	if err := cfg.Redis.Validate(); err != nil {
+		return errors.Wrap(err, "validating redis config")
+	}
+
 	if cfg.MaxSlotsPerContainer <= 0 {
 		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
 	}
@@ -96,6 +100,11 @@ func runManager(ctx context.Context) error {
 
 func runWorker(ctx context.Context) error {
 	cfg := config.LoadWorkerFromEnv()
+
+	if err := cfg.Redis.Validate(); err != nil {
+		return errors.Wrap(err, "validating redis config")
+	}
+
 	rdb := redis.NewClient(cfg.Redis.Options())
 
 	if err := pingRedis(ctx, rdb); err != nil {
@@ -110,6 +119,10 @@ func runWorker(ctx context.Context) error {
 
 func runMonitor(ctx context.Context) error {
 	cfg := config.LoadMonitorFromEnv()
+
+	if err := cfg.Redis.Validate(); err != nil {
+		return errors.Wrap(err, "validating redis config")
+	}
 
 	if err := validateMonitorConfig(&cfg); err != nil {
 		return err
