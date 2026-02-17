@@ -30,8 +30,8 @@ func TestHeartbeatPublish(t *testing.T) {
 	srv, rdb := setupHeartbeat(t)
 	ctx := context.Background()
 
-	slot := worker.NewSlot(1, json.RawMessage(`{}`), testLogger())
-	slot.Start()
+	slot := worker.NewSlot(1, json.RawMessage(`{}`), nil, testLogger())
+	slot.Start(context.Background())
 
 	defer slot.Stop()
 
@@ -93,10 +93,10 @@ func TestHeartbeatMultipleSlots(t *testing.T) {
 	srv, rdb := setupHeartbeat(t)
 	ctx := context.Background()
 
-	slot1 := worker.NewSlot(1, json.RawMessage(`{}`), testLogger())
-	slot2 := worker.NewSlot(2, json.RawMessage(`{}`), testLogger())
-	slot1.Start()
-	slot2.Start()
+	slot1 := worker.NewSlot(1, json.RawMessage(`{}`), nil, testLogger())
+	slot2 := worker.NewSlot(2, json.RawMessage(`{}`), nil, testLogger())
+	slot1.Start(context.Background())
+	slot2.Start(context.Background())
 
 	defer slot1.Stop()
 	defer slot2.Stop()

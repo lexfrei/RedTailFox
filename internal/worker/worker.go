@@ -28,13 +28,15 @@ type Worker struct {
 	containerName string
 	commandCh     string
 	reportsQueue  string
+	workFunc      WorkFunc
 	slots         map[string]*Slot
 	mu            sync.Mutex
 	log           *slog.Logger
 }
 
 // New creates a new Worker.
-func New(rdb *redis.Client, containerName, commandChannel, reportsQueue string, log *slog.Logger) *Worker {
+// workFunc is the business logic executed by each slot; nil means slots idle.
+func New(rdb *redis.Client, containerName, commandChannel, reportsQueue string, workFunc WorkFunc, log *slog.Logger) *Worker {
 	if reportsQueue == "" {
 		reportsQueue = defaultReportsQueue
 	}
@@ -44,6 +46,7 @@ func New(rdb *redis.Client, containerName, commandChannel, reportsQueue string, 
 		containerName: containerName,
 		commandCh:     commandChannel,
 		reportsQueue:  reportsQueue,
+		workFunc:      workFunc,
 		slots:         make(map[string]*Slot),
 		log:           log,
 	}
@@ -101,9 +104,9 @@ func (w *Worker) handleStart(ctx context.Context, slotID string, task *model.Tas
 		return
 	}
 
-	slot := NewSlot(task.SlotID, task.Config, w.log)
+	slot := NewSlot(task.SlotID, task.Config, w.workFunc, w.log)
 	w.slots[slotID] = slot
-	slot.Start()
+	slot.Start(ctx)
 
 	w.sendReport(ctx, task.SlotID, "started", "")
 }

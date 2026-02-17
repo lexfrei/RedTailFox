@@ -79,7 +79,7 @@ func runWorker(ctx context.Context) {
 	cfg := config.LoadWorkerFromEnv()
 	rdb := redis.NewClient(cfg.Redis.Options())
 
-	wrk := worker.New(rdb, cfg.ContainerName, cfg.CommandChannel, cfg.ReportsQueue, slog.Default())
+	wrk := worker.New(rdb, cfg.ContainerName, cfg.CommandChannel, cfg.ReportsQueue, nil, slog.Default())
 	wrk.Run(ctx)
 }
 
