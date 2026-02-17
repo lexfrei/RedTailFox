@@ -1,15 +1,24 @@
-FROM golang:1.26-alpine AS builder
+# Build the redtailfox binary
+FROM golang:1.26 AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
-WORKDIR /src
+WORKDIR /workspace
 
-COPY go.mod go.sum ./
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
 RUN go mod download
 
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /redtailfox ./cmd/redtailfox
+# Copy the go source
+COPY cmd/ cmd/
+COPY internal/ internal/
+
+# Build
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o redtailfox ./cmd/redtailfox
 
 FROM scratch
-
-COPY --from=builder /redtailfox /redtailfox
+WORKDIR /
+COPY --from=builder /workspace/redtailfox .
 
 ENTRYPOINT ["/redtailfox"]
