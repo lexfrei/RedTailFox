@@ -100,13 +100,21 @@ func (r *OCIRuntime) List(ctx context.Context, namePrefix string) ([]Container, 
 		return nil, errors.Wrap(rtferrors.ErrRuntimeUnavailable, "listing containers")
 	}
 
-	listOpts := client.ContainerListOptions{All: false}
+	filters := make(client.Filters)
+	filters.Add("name", namePrefix)
+
+	listOpts := client.ContainerListOptions{
+		All:     false,
+		Filters: filters,
+	}
 
 	listed, err := r.cli.ContainerList(ctx, listOpts)
 	if err != nil {
 		return nil, errors.Wrap(err, "listing containers")
 	}
 
+	// Server-side name filter uses substring match, so apply prefix filter
+	// client-side as a safety measure.
 	return filterByPrefix(listed.Items, namePrefix), nil
 }
 

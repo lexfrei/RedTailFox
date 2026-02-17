@@ -84,7 +84,8 @@ func (mon *Monitor) Run(ctx context.Context) {
 // Step performs a single health check cycle. Exported for testing.
 func (mon *Monitor) Step(ctx context.Context) {
 	seenContainers := mon.checkHeartbeats(ctx)
-	mon.checkMissingContainers(ctx, seenContainers)
+	activeContainers := mon.checkMissingContainers(ctx, seenContainers)
+	mon.pruneFailures(seenContainers, activeContainers)
 }
 
 func (mon *Monitor) checkHeartbeats(ctx context.Context) map[string]bool {
@@ -211,15 +212,19 @@ func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots 
 	}
 }
 
-func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]bool) {
+func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]bool) map[string]bool {
+	active := make(map[string]bool)
+
 	members, err := mon.rdb.SMembers(ctx, activeContainersKey).Result()
 	if err != nil {
 		mon.log.Error("failed to read active containers", "error", err)
 
-		return
+		return active
 	}
 
 	for _, name := range members {
+		active[name] = true
+
 		if seen[name] {
 			continue
 		}
@@ -246,6 +251,20 @@ func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]
 			ContainerName: name,
 			InitiatedBy:   "monitor",
 		})
+
+		delete(mon.failures, name)
+	}
+
+	return active
+}
+
+// pruneFailures removes failure counters for containers that are no longer
+// tracked in heartbeat keys or the active containers set.
+func (mon *Monitor) pruneFailures(seen, active map[string]bool) {
+	for name := range mon.failures {
+		if seen[name] || active[name] {
+			continue
+		}
 
 		delete(mon.failures, name)
 	}

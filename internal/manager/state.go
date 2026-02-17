@@ -82,26 +82,38 @@ func (s *State) GetSlotContainer(ctx context.Context, slotID int) (string, error
 	return val, nil
 }
 
-// PickContainer finds a container with available slot capacity.
+// pickContainerScript atomically finds a container with available capacity.
+// KEYS[1] = active containers set.
+// ARGV[1] = max slots, ARGV[2] = container info key prefix, ARGV[3] = slots suffix.
+//
+//nolint:gochecknoglobals,dupword // Pre-compiled Lua script; "end" closes both the if-block and the for-loop.
+var pickContainerScript = redis.NewScript(`
+local members = redis.call('SMEMBERS', KEYS[1])
+local max = tonumber(ARGV[1])
+local prefix = ARGV[2]
+local suffix = ARGV[3]
+for _, name in ipairs(members) do
+    local count = redis.call('SCARD', prefix .. name .. suffix)
+    if count < max then
+        return name
+    end
+end
+return ''
+`)
+
+// PickContainer atomically finds a container with available slot capacity.
 // Returns empty string if all containers are full.
 func (s *State) PickContainer(ctx context.Context) (string, error) {
-	active, err := s.rdb.SMembers(ctx, activeContainersKey).Result()
+	result, err := pickContainerScript.Run(
+		ctx, s.rdb,
+		[]string{activeContainersKey},
+		s.maxSlots, containerInfoKeyPrefix, ":slots",
+	).Text()
 	if err != nil {
-		return "", errors.Wrap(err, "listing active containers")
+		return "", errors.Wrap(err, "picking container atomically")
 	}
 
-	for _, name := range active {
-		count, err := s.rdb.SCard(ctx, containerSlotsKey(name)).Result()
-		if err != nil {
-			continue
-		}
-
-		if int(count) < s.maxSlots {
-			return name, nil
-		}
-	}
-
-	return "", nil
+	return result, nil
 }
 
 // SaveSlotConfig stores slot configuration in Redis for restart capability.
@@ -167,16 +179,15 @@ func (s *State) ContainerSlots(ctx context.Context, containerName string) ([]str
 	return slots, nil
 }
 
-// RemoveContainer removes a container from the active set and deletes its slot set.
+// RemoveContainer removes a container from the active set and deletes its slot set atomically.
 func (s *State) RemoveContainer(ctx context.Context, containerName string) error {
-	err := s.rdb.Del(ctx, containerSlotsKey(containerName)).Err()
-	if err != nil {
-		return errors.Wrap(err, "deleting container slot set")
-	}
+	pipe := s.rdb.TxPipeline()
+	pipe.Del(ctx, containerSlotsKey(containerName))
+	pipe.SRem(ctx, activeContainersKey, containerName)
 
-	err = s.rdb.SRem(ctx, activeContainersKey, containerName).Err()
+	_, err := pipe.Exec(ctx)
 	if err != nil {
-		return errors.Wrap(err, "removing container from active set")
+		return errors.Wrap(err, "removing container state")
 	}
 
 	return nil

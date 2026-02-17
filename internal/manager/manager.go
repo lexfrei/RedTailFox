@@ -242,7 +242,7 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 func (m *Manager) resolveConfig(ctx context.Context, slotID int, config json.RawMessage) (json.RawMessage, error) {
 	if len(config) > 0 {
 		if err := m.state.SaveSlotConfig(ctx, slotID, config); err != nil {
-			m.log.Error("failed to save slot config", "slotID", slotID, "error", err)
+			return nil, errors.Wrapf(err, "saving config for slot %d", slotID)
 		}
 
 		return config, nil
@@ -345,7 +345,10 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 	containerName := task.ContainerName
 	m.log.Error("full container restart", "container", containerName)
 
-	slots, _ := m.state.ContainerSlots(ctx, containerName)
+	slots, err := m.state.ContainerSlots(ctx, containerName)
+	if err != nil {
+		return errors.Wrapf(err, "listing slots for container %s", containerName)
+	}
 
 	stopTimeout := 10 * time.Second
 	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
@@ -464,7 +467,12 @@ func (m *Manager) SyncContainers(ctx context.Context) {
 }
 
 func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName string) {
-	slots, _ := m.state.ContainerSlots(ctx, containerName)
+	slots, err := m.state.ContainerSlots(ctx, containerName)
+	if err != nil {
+		m.log.Error("failed to list slots for vanished container", "container", containerName, "error", err)
+
+		return
+	}
 
 	for _, sid := range slots {
 		slotID, err := strconv.Atoi(sid)

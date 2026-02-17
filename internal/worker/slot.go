@@ -45,7 +45,9 @@ type Slot struct {
 	work     WorkFunc
 	mu       sync.Mutex
 	stopCh   chan struct{}
+	doneCh   chan struct{}
 	stopOnce sync.Once
+	started  bool
 	log      *slog.Logger
 }
 
@@ -59,6 +61,7 @@ func NewSlot(slotID int, config json.RawMessage, work WorkFunc, log *slog.Logger
 		LastActive: time.Now().Unix(),
 		work:       work,
 		stopCh:     make(chan struct{}),
+		doneCh:     make(chan struct{}),
 		log:        log,
 	}
 }
@@ -67,20 +70,30 @@ func NewSlot(slotID int, config json.RawMessage, work WorkFunc, log *slog.Logger
 func (s *Slot) Start(ctx context.Context) {
 	s.mu.Lock()
 	s.Running = true
+	s.started = true
 	s.mu.Unlock()
 
 	go s.run(ctx)
 }
 
-// Stop gracefully terminates the slot's work loop. Safe to call concurrently.
+// Stop gracefully terminates the slot's work loop and waits for it to finish.
+// Safe to call concurrently and before Start.
 func (s *Slot) Stop() {
 	s.stopOnce.Do(func() {
 		s.mu.Lock()
+		started := s.started
 		s.Running = false
 		s.mu.Unlock()
 
 		close(s.stopCh)
+
+		// If never started, close doneCh ourselves since run() will never run.
+		if !started {
+			close(s.doneCh)
+		}
 	})
+
+	<-s.doneCh
 }
 
 // IsRunning returns whether the slot is active.
@@ -117,7 +130,9 @@ func (s *Slot) Snapshot() model.SlotHeartbeat {
 }
 
 func (s *Slot) run(parent context.Context) {
-	checkInterval := extractCheckInterval(s.Config)
+	defer close(s.doneCh)
+
+	checkInterval := extractCheckInterval(s.Config, s.log)
 	lastCheck := int64(0)
 	ticker := time.NewTicker(tickInterval)
 
@@ -190,7 +205,7 @@ func (s *Slot) backoff(ctx context.Context) {
 	}
 }
 
-func extractCheckInterval(config json.RawMessage) int {
+func extractCheckInterval(config json.RawMessage, log *slog.Logger) int {
 	var cfg struct {
 		Bot struct {
 			CheckInterval int `json:"checkInterval"`
@@ -198,7 +213,18 @@ func extractCheckInterval(config json.RawMessage) int {
 	}
 
 	err := json.Unmarshal(config, &cfg)
-	if err != nil || cfg.Bot.CheckInterval == 0 {
+	if err != nil {
+		log.Warn("failed to parse check interval from config, using default",
+			"default", defaultInterval,
+			"error", err,
+		)
+
+		return defaultInterval
+	}
+
+	if cfg.Bot.CheckInterval <= 0 {
+		log.Info("check interval not set in config, using default", "default", defaultInterval)
+
 		return defaultInterval
 	}
 
