@@ -27,9 +27,8 @@ COPY --from=builder /workspace/passwd /etc/passwd
 COPY --from=builder /workspace/group /etc/group
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /workspace/redtailfox /redtailfox
-# Default to non-root. The manager service overrides this to root via
-# compose.yaml "user: 0:0" because it needs access to the container
-# runtime socket for spawning worker containers.
+# Default to non-root. The manager connects to the container runtime
+# via a TCP socket proxy, so it does not need root either.
 USER 65532:65532
 
 ENTRYPOINT ["/redtailfox"]

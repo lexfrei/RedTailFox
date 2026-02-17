@@ -447,6 +447,19 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 	}
 
 	if err := m.state.SetContainerChannel(ctx, containerName, channel); err != nil {
+		// Container is running but has no Redis state — clean it up to
+		// prevent an orphan that sits idle until the next sync cycle.
+		m.log.Error("failed to store channel, removing orphaned container",
+			"container", containerName, "error", err)
+
+		if stopErr := m.runtime.Stop(ctx, containerName, containerStopTimeout); stopErr != nil {
+			m.log.Error("failed to stop orphaned container", "container", containerName, "error", stopErr)
+		}
+
+		if rmErr := m.runtime.Remove(ctx, containerName); rmErr != nil {
+			m.log.Error("failed to remove orphaned container", "container", containerName, "error", rmErr)
+		}
+
 		return "", errors.Wrap(err, "storing container channel")
 	}
 
@@ -743,15 +756,33 @@ func (m *Manager) cleanupEmptyContainer(ctx context.Context, containerName strin
 // SyncContainers detects and cleans up state mismatches:
 // 1. Containers tracked in Redis but missing from the runtime (vanished).
 // 2. Containers running in the runtime but not tracked in Redis (orphaned).
+//
+// Redis state cleanup for vanished containers runs under m.mu (fast).
+// Slow runtime.Stop/Remove calls for orphaned containers run outside the
+// lock so the manager remains responsive to tasks and reports.
 func (m *Manager) SyncContainers(ctx context.Context) {
+	orphaned := m.syncStateUnderLock(ctx)
+
+	for _, name := range orphaned {
+		m.log.Warn("orphaned container found, stopping", "container", name)
+		m.stopOrphanedContainer(ctx, name)
+	}
+}
+
+// syncStateUnderLock detects mismatches, cleans up vanished containers
+// (Redis-only, fast), and returns orphaned container names for subsequent
+// runtime cleanup outside the lock.
+func (m *Manager) syncStateUnderLock(ctx context.Context) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	actual, err := m.runtime.List(ctx, m.cfg.ContainerNamePrefix)
+	// Append "_" so that prefix "fox" does not match unrelated containers
+	// like "foxtail". The manager always names workers as "<prefix>_<index>".
+	actual, err := m.runtime.List(ctx, m.cfg.ContainerNamePrefix+"_")
 	if err != nil {
 		m.log.Error("sync: failed to list containers", "error", err)
 
-		return
+		return nil
 	}
 
 	actualSet := make(map[string]bool, len(actual))
@@ -763,7 +794,7 @@ func (m *Manager) SyncContainers(ctx context.Context) {
 	if err != nil {
 		m.log.Error("sync: failed to list redis containers", "error", err)
 
-		return
+		return nil
 	}
 
 	redisSet := make(map[string]bool, len(redisContainers))
@@ -771,23 +802,21 @@ func (m *Manager) SyncContainers(ctx context.Context) {
 	for _, name := range redisContainers {
 		redisSet[name] = true
 
-		if actualSet[name] {
-			continue
+		if !actualSet[name] {
+			m.log.Warn("container vanished from runtime, cleaning up", "container", name)
+			m.cleanupVanishedContainer(ctx, name)
 		}
-
-		m.log.Warn("container vanished from runtime, cleaning up", "container", name)
-		m.cleanupVanishedContainer(ctx, name)
 	}
 
-	// Detect orphaned containers: running in the runtime but not in Redis.
+	var result []string
+
 	for _, ctr := range actual {
-		if redisSet[ctr.Name] {
-			continue
+		if !redisSet[ctr.Name] {
+			result = append(result, ctr.Name)
 		}
-
-		m.log.Warn("orphaned container found, stopping", "container", ctr.Name)
-		m.stopOrphanedContainer(ctx, ctr.Name)
 	}
+
+	return result
 }
 
 func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName string) {
