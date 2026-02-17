@@ -27,6 +27,10 @@ const (
 	maxMessageSize = 1 << 20 // 1 MiB.
 	// maxConfigSize limits the size of slot configuration JSON specifically.
 	maxConfigSize = maxMessageSize
+	// maxContainers is a safety limit on the number of worker containers the
+	// manager will create. This prevents runaway container creation from a
+	// burst of start tasks or a bug in the slot assignment logic.
+	maxContainers = 100
 )
 
 // Config holds manager-specific settings.
@@ -93,18 +97,21 @@ func (m *Manager) Run(ctx context.Context) {
 
 	go func() {
 		defer wgr.Done()
+		defer m.recoverPanic("taskLoop")
 
 		m.taskLoop(ctx)
 	}()
 
 	go func() {
 		defer wgr.Done()
+		defer m.recoverPanic("syncLoop")
 
 		m.syncLoop(ctx)
 	}()
 
 	go func() {
 		defer wgr.Done()
+		defer m.recoverPanic("reportLoop")
 
 		// Run report loop on main ctx, then drain remaining reports
 		// with a bounded timeout so we never hang on shutdown.
@@ -117,11 +124,23 @@ func (m *Manager) Run(ctx context.Context) {
 		m.reportLoop(drainCtx)
 	}()
 
+	// wgr.Wait() guarantees all three goroutines have exited before
+	// shutdownContainers runs, so no concurrent access to m.mu is possible
+	// from the loop goroutines during shutdown.
 	wgr.Wait()
 
 	m.shutdownContainers()
 
 	m.log.Warn("manager stopped")
+}
+
+// recoverPanic logs panics from manager goroutines so that a single
+// crashing loop does not take down the entire process.
+func (m *Manager) recoverPanic(loop string) {
+	if rec := recover(); rec != nil {
+		m.log.Error("panic in manager goroutine",
+			"loop", loop, "panic", rec)
+	}
 }
 
 func (m *Manager) taskLoop(ctx context.Context) {
@@ -377,6 +396,17 @@ func (m *Manager) ensureContainer(ctx context.Context, slotID int) (string, erro
 }
 
 func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, error) {
+	active, err := m.state.ActiveContainers(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "counting active containers")
+	}
+
+	if len(active) >= maxContainers {
+		return "", errors.Wrapf(errdefs.ErrInvalidConfig,
+			"container limit reached (%d/%d), cannot start new container for slot %d",
+			len(active), maxContainers, slotID)
+	}
+
 	idx, err := m.state.NextContainerIndex(ctx)
 	if err != nil {
 		return "", errors.Wrap(err, "getting container index")

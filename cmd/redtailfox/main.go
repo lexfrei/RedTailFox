@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"regexp"
 	"syscall"
 
 	"github.com/cockroachdb/errors"
@@ -18,6 +19,11 @@ import (
 	"github.com/Dark-F0X/RedTailFox/internal/monitor"
 	"github.com/Dark-F0X/RedTailFox/internal/worker"
 )
+
+// containerNameRe validates the container name prefix. OCI runtimes require
+// names to match [a-zA-Z0-9][a-zA-Z0-9_.-]*; the manager appends "_<index>"
+// so the prefix itself must also be valid.
+var containerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
 
 const minArgs = 2
 
@@ -82,6 +88,12 @@ func runManager(ctx context.Context) error {
 
 	if cfg.ContainerNamePrefix == "" {
 		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_CONTAINER_PREFIX must not be empty")
+	}
+
+	if !containerNameRe.MatchString(cfg.ContainerNamePrefix) {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"WORKER_CONTAINER_PREFIX %q contains invalid characters (must match [a-zA-Z0-9][a-zA-Z0-9_.-]*)",
+			cfg.ContainerNamePrefix)
 	}
 
 	if cfg.Redis.Password != "" {

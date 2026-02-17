@@ -269,33 +269,32 @@ func (mon *Monitor) restartContainer(
 func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots []model.SlotHeartbeat, now int64) {
 	for idx := range slots {
 		slot := &slots[idx]
-		key := slotFailureKey(containerName, slot.SlotID)
 
 		if !slot.Running {
-			mon.handleUnhealthySlot(ctx, key, containerName, slot.SlotID, "slot not running")
+			mon.handleUnhealthySlot(ctx, containerName, slot.SlotID, "slot not running")
 
 			continue
 		}
 
 		if now-slot.LastActive > mon.cfg.SlotIdleTimeout {
-			mon.handleUnhealthySlot(ctx, key, containerName, slot.SlotID,
+			mon.handleUnhealthySlot(ctx, containerName, slot.SlotID,
 				fmt.Sprintf("slot idle %ds", now-slot.LastActive))
 
 			continue
 		}
 
 		// Slot is healthy — reset its failure counter.
-		mon.resetCounters(ctx, slotFailureKeyPrefix+key)
+		mon.resetCounters(ctx, slotFailureRedisKey(containerName, slot.SlotID))
 	}
 }
 
 func (mon *Monitor) handleUnhealthySlot(
 	ctx context.Context,
-	key, containerName string,
+	containerName string,
 	slotID int,
 	reason string,
 ) {
-	redisKey := slotFailureKeyPrefix + key
+	redisKey := slotFailureRedisKey(containerName, slotID)
 
 	count, err := mon.incrCounter(ctx, redisKey)
 	if err != nil {
@@ -339,8 +338,9 @@ func (mon *Monitor) handleUnhealthySlot(
 	mon.sendSlotRestart(ctx, containerName, slotID)
 }
 
-func slotFailureKey(containerName string, slotID int) string {
-	return fmt.Sprintf("%s:%d", containerName, slotID)
+// slotFailureRedisKey returns the full Redis key for a slot failure counter.
+func slotFailureRedisKey(containerName string, slotID int) string {
+	return fmt.Sprintf("%s%s:%d", slotFailureKeyPrefix, containerName, slotID)
 }
 
 func (mon *Monitor) checkMissingContainers(ctx context.Context, containers []string, seen map[string]bool) {
