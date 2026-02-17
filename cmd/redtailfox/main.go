@@ -78,6 +78,10 @@ func runManager(ctx context.Context) error {
 		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
 	}
 
+	if cfg.ContainerNamePrefix == "" {
+		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_CONTAINER_PREFIX must not be empty")
+	}
+
 	if cfg.Redis.Password != "" {
 		slog.Warn("REDIS_PASSWORD is passed to worker containers as a plaintext environment variable; " +
 			"use secrets management (e.g. mounted files via REDIS_PASSWORD_FILE) for production deployments")

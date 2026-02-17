@@ -766,6 +766,9 @@ func (m *Manager) publishDBWrite(ctx context.Context, slotID int, status, initia
 // graceful shutdown. Uses a background context since the signal context is
 // already cancelled at this point.
 func (m *Manager) shutdownContainers() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), containerShutdownTimeout)
 	defer cancel()
 

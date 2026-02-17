@@ -53,7 +53,8 @@ All settings are read from environment variables.
 | --- | --- | --- |
 | `REDIS_HOST` | `localhost` | Redis host |
 | `REDIS_PORT` | `6379` | Redis port |
-| `REDIS_PASSWORD` | (empty) | Redis password |
+| `REDIS_PASSWORD` | (empty) | Redis password (takes precedence over file) |
+| `REDIS_PASSWORD_FILE` | (empty) | Path to file containing Redis password |
 
 ### Manager
 
@@ -66,6 +67,7 @@ All settings are read from environment variables.
 | `WORKER_TASKS_LIST` | `manager_tasks` | Redis queue for incoming tasks |
 | `WORKER_REPORTS_CHANNEL` | `worker_reports` | Redis queue for worker reports |
 | `DB_WRITE_QUEUE` | `db_write_requests` | Redis queue for database write events |
+| `WORKER_NETWORK` | (empty) | Container network for spawned workers |
 
 ### Worker
 

@@ -582,6 +582,48 @@ func TestHandleSlotStopped_EmptyContainerName(t *testing.T) {
 	}
 }
 
+func TestHandleStartTask_SendCommandFailure_Rollback(t *testing.T) {
+	env := setupManager(t)
+	ctx := context.Background()
+
+	// Start slot 1 to create a container.
+	task1 := model.Task{
+		Command: model.CommandStart,
+		SlotID:  1,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	err := env.mgr.HandleTask(ctx, task1)
+	if err != nil {
+		t.Fatalf("failed to start slot 1: %v", err)
+	}
+
+	// Delete the container channel so sendCommand fails on slot 2.
+	env.rdb.HDel(ctx, "manager:container_channels", testContainerName)
+
+	// Start slot 2 — RegisterSlot succeeds but sendCommand fails.
+	task2 := model.Task{
+		Command: model.CommandStart,
+		SlotID:  2,
+		Config:  json.RawMessage(`{}`),
+	}
+
+	err = env.mgr.HandleTask(ctx, task2)
+	if err == nil {
+		t.Fatal("expected error when command channel is missing")
+	}
+
+	// Verify slot 2 was rolled back (not registered).
+	exists, existsErr := env.rdb.HExists(ctx, "manager:slot_to_container", "2").Result()
+	if existsErr != nil {
+		t.Fatalf("failed to check slot existence: %v", existsErr)
+	}
+
+	if exists {
+		t.Error("slot 2 should have been rolled back after sendCommand failure")
+	}
+}
+
 func TestHandleRestartContainer_StopFailure(t *testing.T) {
 	env := setupManager(t)
 	ctx := context.Background()
