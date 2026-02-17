@@ -43,6 +43,12 @@ func main() {
 
 func runManager(ctx context.Context) {
 	cfg := config.LoadManagerFromEnv()
+
+	if cfg.MaxSlotsPerContainer <= 0 {
+		slog.Error("MAX_SLOTS_PER_CONTAINER must be positive", "value", cfg.MaxSlotsPerContainer)
+		os.Exit(1)
+	}
+
 	rdb := redis.NewClient(cfg.Redis.Options())
 
 	runtime, err := container.NewOCIRuntime(slog.Default())
@@ -63,6 +69,7 @@ func runManager(ctx context.Context) {
 		RedisPort:            cfg.Redis.Port,
 		RedisPassword:        cfg.Redis.Password,
 		EventChannel:         "",
+		WorkerNetwork:        cfg.WorkerNetwork,
 	})
 
 	mgr.Run(ctx)
@@ -72,7 +79,7 @@ func runWorker(ctx context.Context) {
 	cfg := config.LoadWorkerFromEnv()
 	rdb := redis.NewClient(cfg.Redis.Options())
 
-	wrk := worker.New(rdb, cfg.ContainerName, cfg.CommandChannel, slog.Default())
+	wrk := worker.New(rdb, cfg.ContainerName, cfg.CommandChannel, cfg.ReportsQueue, slog.Default())
 	wrk.Run(ctx)
 }
 

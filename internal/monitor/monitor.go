@@ -224,6 +224,21 @@ func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]
 			continue
 		}
 
+		// Apply the same failure counter as stale heartbeats to avoid restart
+		// storms for containers that just started and haven't published yet.
+		mon.failures[name]++
+		count := mon.failures[name]
+
+		if count < failureThreshold {
+			mon.log.Warn("container missing heartbeat",
+				"container", name,
+				"failures", count,
+				"threshold", failureThreshold,
+			)
+
+			continue
+		}
+
 		mon.log.Error("container missing heartbeat, restarting", "container", name)
 
 		mon.sendTask(ctx, &model.Task{
@@ -231,6 +246,8 @@ func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]
 			ContainerName: name,
 			InitiatedBy:   "monitor",
 		})
+
+		delete(mon.failures, name)
 	}
 }
 

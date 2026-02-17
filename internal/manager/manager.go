@@ -38,6 +38,7 @@ type Config struct {
 	RedisPort            string
 	RedisPassword        string
 	EventChannel         string
+	WorkerNetwork        string
 }
 
 // Manager orchestrates container lifecycle and slot distribution.
@@ -208,7 +209,15 @@ func (m *Manager) handleStart(ctx context.Context, task model.Task) error {
 		return err
 	}
 
-	if m.state.SlotExists(ctx, task.SlotID) {
+	exists, err := m.state.SlotExists(ctx, task.SlotID)
+	if err != nil {
+		// On Redis error, assume slot exists to prevent duplicates.
+		m.log.Error("failed to check slot existence, assuming exists", "slotID", task.SlotID, "error", err)
+
+		return errors.Wrap(err, "checking slot existence")
+	}
+
+	if exists {
 		m.log.Warn("slot already running, skipping", "slotID", task.SlotID)
 
 		return nil
@@ -274,6 +283,7 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 		Name:          containerName,
 		RestartPolicy: "unless-stopped",
 		Env:           m.buildContainerEnv(idx, containerName, channel),
+		Network:       m.cfg.WorkerNetwork,
 	}
 
 	if _, err := m.runtime.Run(ctx, opts); err != nil {
@@ -300,10 +310,14 @@ func (m *Manager) buildContainerEnv(idx int64, name, channel string) map[string]
 func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 	containerName, err := m.state.GetSlotContainer(ctx, task.SlotID)
 	if err != nil {
+		if !errors.Is(err, errdefs.ErrSlotNotFound) {
+			return errors.Wrap(err, "looking up slot for stop")
+		}
+
 		m.publishDBWrite(ctx, task.SlotID, "stop", "manager", "")
 		m.log.Warn("slot not found for stop, publishing status anyway", "slotID", task.SlotID)
 
-		return nil //nolint:nilerr // slot not found is expected; we still publish the stop event.
+		return nil
 	}
 
 	return m.sendCommand(ctx, containerName, model.Task{
@@ -342,6 +356,12 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		m.log.Error("failed to remove container", "container", containerName, "error", err)
 	}
 
+	// Remove container state BEFORE re-creating slots so PickContainer does not
+	// select the dead container for new slot assignments.
+	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
+		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+	}
+
 	for _, sid := range slots {
 		slotID, err := strconv.Atoi(sid)
 		if err != nil {
@@ -362,10 +382,6 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		}); err != nil {
 			m.log.Error("failed to restart slot", "slotID", slotID, "error", err)
 		}
-	}
-
-	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
-		m.log.Error("failed to remove container state", "container", containerName, "error", err)
 	}
 
 	return nil

@@ -28,6 +28,9 @@ type RunOptions struct {
 
 	// RestartPolicy defines the container restart behavior (e.g., "unless-stopped").
 	RestartPolicy string
+
+	// Network is the container network to attach to (e.g., compose project network).
+	Network string
 }
 
 // Runtime defines operations for managing OCI-compatible containers.

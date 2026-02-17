@@ -250,9 +250,18 @@ func TestMonitorStep_MissingHeartbeat(t *testing.T) {
 	// Container is registered as active but has no heartbeat key.
 	registerContainer(t, env.srv, testContainerName)
 
+	// First check: failure counter incremented but no restart yet.
 	env.mon.Step(ctx)
 
 	tasks := readTasks(t, env.srv)
+	if len(tasks) != 0 {
+		t.Fatalf("first check should not restart, got %d tasks", len(tasks))
+	}
+
+	// Second check: failure counter reaches threshold, restart.
+	env.mon.Step(ctx)
+
+	tasks = readTasks(t, env.srv)
 	if len(tasks) != 1 {
 		t.Fatalf("expected 1 restart task for missing heartbeat, got %d", len(tasks))
 	}

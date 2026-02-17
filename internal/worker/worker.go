@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	reportsQueue   = "worker_reports"
-	commandTimeout = 10 * time.Second
-	shutdownDelay  = time.Second
+	defaultReportsQueue = "worker_reports"
+	commandTimeout      = 10 * time.Second
+	shutdownDelay       = time.Second
 )
 
 // Worker manages slots inside a container and listens for commands.
@@ -27,17 +27,23 @@ type Worker struct {
 	rdb           *redis.Client
 	containerName string
 	commandCh     string
+	reportsQueue  string
 	slots         map[string]*Slot
 	mu            sync.Mutex
 	log           *slog.Logger
 }
 
 // New creates a new Worker.
-func New(rdb *redis.Client, containerName, commandChannel string, log *slog.Logger) *Worker {
+func New(rdb *redis.Client, containerName, commandChannel, reportsQueue string, log *slog.Logger) *Worker {
+	if reportsQueue == "" {
+		reportsQueue = defaultReportsQueue
+	}
+
 	return &Worker{
 		rdb:           rdb,
 		containerName: containerName,
 		commandCh:     commandChannel,
+		reportsQueue:  reportsQueue,
 		slots:         make(map[string]*Slot),
 		log:           log,
 	}
@@ -136,7 +142,7 @@ func (w *Worker) sendReport(ctx context.Context, slotID int, status, errorText s
 		return
 	}
 
-	err = w.rdb.LPush(ctx, reportsQueue, data).Err()
+	err = w.rdb.LPush(ctx, w.reportsQueue, data).Err()
 	if err != nil {
 		w.log.Error("failed to send report", "error", err)
 	}

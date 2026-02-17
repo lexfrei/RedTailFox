@@ -35,6 +35,7 @@ type Manager struct {
 	TasksQueue           string
 	ReportsQueue         string
 	DBWriteQueue         string
+	WorkerNetwork        string
 }
 
 // Worker holds configuration for the worker component.
@@ -43,6 +44,7 @@ type Worker struct {
 	CommandChannel string
 	EventChannel   string
 	ContainerName  string
+	ReportsQueue   string
 }
 
 // Monitor holds configuration for the monitor component.
@@ -75,6 +77,7 @@ func LoadManagerFromEnv() Manager {
 		TasksQueue:           envOrDefault("WORKER_TASKS_LIST", "manager_tasks"),
 		ReportsQueue:         envOrDefault("WORKER_REPORTS_CHANNEL", "worker_reports"),
 		DBWriteQueue:         envOrDefault("DB_WRITE_QUEUE", "db_write_requests"),
+		WorkerNetwork:        envOrDefault("WORKER_NETWORK", ""),
 	}
 }
 
@@ -85,6 +88,7 @@ func LoadWorkerFromEnv() Worker {
 		CommandChannel: envOrDefault("COMMAND_CHANNEL", "worker_commands"),
 		EventChannel:   envOrDefault("EVENT_CHANNEL", "events"),
 		ContainerName:  envOrDefault("CONTAINER_NAME", "unknown_container"),
+		ReportsQueue:   envOrDefault("WORKER_REPORTS_CHANNEL", "worker_reports"),
 	}
 }
 
@@ -108,8 +112,8 @@ func LoadMonitorFromEnv() Monitor {
 }
 
 func envOrDefault(key, fallback string) string {
-	val := os.Getenv(key)
-	if val == "" {
+	val, ok := os.LookupEnv(key)
+	if !ok || val == "" {
 		return fallback
 	}
 
@@ -117,8 +121,8 @@ func envOrDefault(key, fallback string) string {
 }
 
 func envIntOrDefault(key string, fallback int) int {
-	val := os.Getenv(key)
-	if val == "" {
+	val, ok := os.LookupEnv(key)
+	if !ok || val == "" {
 		return fallback
 	}
 

@@ -18,9 +18,10 @@ type Slot struct {
 	Status     model.SlotStatus
 	LastActive int64
 
-	mu     sync.Mutex
-	stopCh chan struct{}
-	log    *slog.Logger
+	mu       sync.Mutex
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	log      *slog.Logger
 }
 
 // NewSlot creates a new slot with the given ID and config.
@@ -44,19 +45,15 @@ func (s *Slot) Start() {
 	go s.run()
 }
 
-// Stop gracefully terminates the slot's work loop.
+// Stop gracefully terminates the slot's work loop. Safe to call concurrently.
 func (s *Slot) Stop() {
-	s.mu.Lock()
-	if !s.Running {
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.Running = false
 		s.mu.Unlock()
 
-		return
-	}
-
-	s.Running = false
-	s.mu.Unlock()
-
-	close(s.stopCh)
+		close(s.stopCh)
+	})
 }
 
 // IsRunning returns whether the slot is active.
@@ -92,6 +89,8 @@ func (s *Slot) Snapshot() model.SlotHeartbeat {
 	}
 }
 
+// run is a stub work loop that cycles through status transitions.
+// Actual work (network calls, data processing) should be added here.
 func (s *Slot) run() {
 	checkInterval := extractCheckInterval(s.Config)
 	lastCheck := int64(0)

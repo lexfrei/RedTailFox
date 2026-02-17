@@ -32,23 +32,18 @@ func NewState(rdb *redis.Client, maxSlots int) *State {
 	return &State{rdb: rdb, maxSlots: maxSlots}
 }
 
-// RegisterSlot assigns a slot to a container in Redis.
+// RegisterSlot assigns a slot to a container in Redis atomically via pipeline.
 func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName string) error {
 	sid := strconv.Itoa(slotID)
 
-	err := s.rdb.HSet(ctx, slotToContainerKey, sid, containerName).Err()
-	if err != nil {
-		return errors.Wrap(err, "setting slot-to-container mapping")
-	}
+	pipe := s.rdb.TxPipeline()
+	pipe.HSet(ctx, slotToContainerKey, sid, containerName)
+	pipe.SAdd(ctx, containerSlotsKey(containerName), sid)
+	pipe.SAdd(ctx, activeContainersKey, containerName)
 
-	err = s.rdb.SAdd(ctx, containerSlotsKey(containerName), sid).Err()
+	_, err := pipe.Exec(ctx)
 	if err != nil {
-		return errors.Wrap(err, "adding slot to container set")
-	}
-
-	err = s.rdb.SAdd(ctx, activeContainersKey, containerName).Err()
-	if err != nil {
-		return errors.Wrap(err, "adding container to active set")
+		return errors.Wrap(err, "registering slot in pipeline")
 	}
 
 	return nil
@@ -63,8 +58,14 @@ func (s *State) UnregisterSlot(ctx context.Context, slotID int) (string, error) 
 		return "", errors.Wrap(rtferrors.ErrSlotNotFound, "unregistering slot")
 	}
 
-	s.rdb.HDel(ctx, slotToContainerKey, sid)
-	s.rdb.SRem(ctx, containerSlotsKey(containerName), sid)
+	pipe := s.rdb.TxPipeline()
+	pipe.HDel(ctx, slotToContainerKey, sid)
+	pipe.SRem(ctx, containerSlotsKey(containerName), sid)
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return containerName, errors.Wrap(err, "cleaning up slot state")
+	}
 
 	return containerName, nil
 }
@@ -182,10 +183,15 @@ func (s *State) RemoveContainer(ctx context.Context, containerName string) error
 }
 
 // SlotExists checks if a slot is currently registered.
-func (s *State) SlotExists(ctx context.Context, slotID int) bool {
+func (s *State) SlotExists(ctx context.Context, slotID int) (bool, error) {
 	sid := strconv.Itoa(slotID)
 
-	return s.rdb.HExists(ctx, slotToContainerKey, sid).Val()
+	exists, err := s.rdb.HExists(ctx, slotToContainerKey, sid).Result()
+	if err != nil {
+		return false, errors.Wrap(err, "checking slot existence")
+	}
+
+	return exists, nil
 }
 
 func containerSlotsKey(containerName string) string {

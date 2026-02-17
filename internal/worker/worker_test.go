@@ -19,7 +19,7 @@ func setupWorker(t *testing.T) (*miniredis.Miniredis, *worker.Worker) {
 
 	srv := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	wrk := worker.New(rdb, testWorkerContainer, "CMD:fox_worker_1", testLogger())
+	wrk := worker.New(rdb, testWorkerContainer, "CMD:fox_worker_1", "worker_reports", testLogger())
 
 	return srv, wrk
 }

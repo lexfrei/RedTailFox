@@ -30,17 +30,23 @@ func NewOCIRuntime(log *slog.Logger) (*OCIRuntime, error) {
 
 // Run creates and starts a new container.
 func (r *OCIRuntime) Run(ctx context.Context, opts RunOptions) (Container, error) {
+	hostCfg := &apitypes.HostConfig{
+		RestartPolicy: apitypes.RestartPolicy{
+			Name: apitypes.RestartPolicyMode(opts.RestartPolicy),
+		},
+	}
+
+	if opts.Network != "" {
+		hostCfg.NetworkMode = apitypes.NetworkMode(opts.Network)
+	}
+
 	createOpts := client.ContainerCreateOptions{
 		Name:  opts.Name,
 		Image: opts.Image,
 		Config: &apitypes.Config{
 			Env: makeEnvList(opts.Env),
 		},
-		HostConfig: &apitypes.HostConfig{
-			RestartPolicy: apitypes.RestartPolicy{
-				Name: apitypes.RestartPolicyMode(opts.RestartPolicy),
-			},
-		},
+		HostConfig: hostCfg,
 	}
 
 	result, err := r.cli.ContainerCreate(ctx, createOpts)
