@@ -117,10 +117,20 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) ma
 			continue
 		}
 
-		seen[hbt.Container] = true
+		// Validate that the heartbeat container field matches the expected
+		// name derived from the active set. A mismatch indicates a stale or
+		// corrupted heartbeat and must be skipped to prevent misrouting.
+		if hbt.Container != containerName {
+			mon.log.Warn("heartbeat container mismatch, skipping",
+				"expected", containerName, "got", hbt.Container)
+
+			continue
+		}
+
+		seen[containerName] = true
 
 		if mon.isStaleHeartbeat(now, hbt.Timestamp) {
-			mon.handleStaleContainer(ctx, hbt.Container)
+			mon.handleStaleContainer(ctx, containerName)
 
 			continue
 		}
@@ -129,9 +139,9 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) ma
 		// counter is deliberately kept so that flapping containers (repeatedly
 		// failing and recovering) still hit maxContainerRestarts. The restart
 		// counter expires naturally via counterTTL.
-		mon.resetCounters(ctx, failureKeyPrefix+hbt.Container)
+		mon.resetCounters(ctx, failureKeyPrefix+containerName)
 
-		mon.checkSlots(ctx, hbt.Container, hbt.Slots, now)
+		mon.checkSlots(ctx, containerName, hbt.Slots, now)
 	}
 
 	return seen

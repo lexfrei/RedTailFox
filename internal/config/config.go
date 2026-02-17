@@ -149,7 +149,7 @@ func LoadManagerFromEnv() (Manager, error) {
 	return Manager{
 		Redis:                redisCfg,
 		MaxSlotsPerContainer: maxSlots,
-		WorkerImage:          envOrDefault("WORKER_IMAGE", "fox_worker:latest"),
+		WorkerImage:          envOrDefault("WORKER_IMAGE", "redtailfox:latest"),
 		ContainerNamePrefix:  envOrDefault("WORKER_CONTAINER_PREFIX", "fox_worker"),
 		CommandChannelPrefix: envOrDefault("COMMAND_CHANNEL_PREFIX", "COMMAND_CHANNEL"),
 		TasksQueue:           envOrDefault("WORKER_TASKS_LIST", "manager_tasks"),

@@ -38,7 +38,7 @@ func TestLoadManagerFromEnv_Defaults(t *testing.T) {
 		t.Errorf("expected default max slots 10, got %d", cfg.MaxSlotsPerContainer)
 	}
 
-	if cfg.WorkerImage != "fox_worker:latest" {
+	if cfg.WorkerImage != "redtailfox:latest" {
 		t.Errorf("expected default worker image, got %s", cfg.WorkerImage)
 	}
 
