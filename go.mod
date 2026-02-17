@@ -3,6 +3,7 @@ module github.com/lexfrei/RedTailFox
 go 1.26
 
 require (
+	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/cockroachdb/errors v1.12.0
 	github.com/moby/moby/api v1.53.0
 	github.com/moby/moby/client v0.2.2
@@ -32,6 +33,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0 // indirect
 	go.opentelemetry.io/otel v1.35.0 // indirect
