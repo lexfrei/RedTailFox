@@ -36,7 +36,9 @@ services:
       context: .
       dockerfile: Containerfile
     command: ["/redtailfox", "manager"]
+    user: "0:0"
     restart: unless-stopped
+    read_only: true
     security_opt:
       - no-new-privileges:true
     networks:

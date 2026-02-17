@@ -40,6 +40,7 @@ type RunOptions struct {
 }
 
 // Runtime defines operations for managing OCI-compatible containers.
+// Implementations must be safe for concurrent use by multiple goroutines.
 type Runtime interface {
 	// Run creates and starts a new container with the given options.
 	Run(ctx context.Context, opts *RunOptions) (Container, error)

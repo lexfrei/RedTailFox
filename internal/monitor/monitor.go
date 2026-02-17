@@ -125,11 +125,11 @@ func (mon *Monitor) checkHeartbeats(ctx context.Context, containers []string) ma
 			continue
 		}
 
-		// Heartbeat is fresh — reset failure and restart counters.
-		mon.resetCounters(ctx,
-			failureKeyPrefix+hbt.Container,
-			containerRestartKeyPrefix+hbt.Container,
-		)
+		// Heartbeat is fresh — reset only the failure counter. The restart
+		// counter is deliberately kept so that flapping containers (repeatedly
+		// failing and recovering) still hit maxContainerRestarts. The restart
+		// counter expires naturally via counterTTL.
+		mon.resetCounters(ctx, failureKeyPrefix+hbt.Container)
 
 		mon.checkSlots(ctx, hbt.Container, hbt.Slots, now)
 	}

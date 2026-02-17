@@ -199,6 +199,10 @@ func (s *Slot) run(parent context.Context) {
 			s.log.Info("slot stopped", "slotID", s.ID)
 
 			return
+		case <-ctx.Done():
+			s.log.Info("slot context cancelled", "slotID", s.ID)
+
+			return
 		case <-ticker.C:
 			s.tick(ctx, &lastCheck, checkInterval)
 		}

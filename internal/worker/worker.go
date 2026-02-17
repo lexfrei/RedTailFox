@@ -20,6 +20,9 @@ const (
 	defaultReportsQueue = "worker_reports"
 	commandTimeout      = 10 * time.Second
 	shutdownDelay       = 5 * time.Second
+	// maxCommandSize limits the size of incoming command messages to prevent
+	// OOM from oversized payloads on the Redis command queue.
+	maxCommandSize = 1 << 20 // 1 MiB.
 )
 
 // Worker manages slots inside a container and listens for commands.
@@ -182,6 +185,13 @@ func (w *Worker) commandLoop(ctx context.Context) {
 			}
 
 			if len(result) >= 2 {
+				if len(result[1]) > maxCommandSize {
+					w.log.Error("command message too large, dropping",
+						"size", len(result[1]), "max", maxCommandSize)
+
+					continue
+				}
+
 				w.HandleCommand(ctx, []byte(result[1]))
 			}
 		}

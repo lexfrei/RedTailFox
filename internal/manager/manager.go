@@ -24,9 +24,11 @@ const (
 	syncInterval             = 30 * time.Second
 	containerStopTimeout     = 10 * time.Second
 	containerShutdownTimeout = 30 * time.Second
-	// maxConfigSize limits the size of slot configuration JSON to prevent OOM
-	// from oversized payloads pushed through the Redis task queue.
-	maxConfigSize = 1 << 20 // 1 MiB.
+	// maxMessageSize limits the size of incoming Redis messages to prevent OOM
+	// from oversized payloads pushed through the task or report queues.
+	maxMessageSize = 1 << 20 // 1 MiB.
+	// maxConfigSize limits the size of slot configuration JSON specifically.
+	maxConfigSize = maxMessageSize
 )
 
 // Config holds manager-specific settings.
@@ -153,6 +155,13 @@ func (m *Manager) taskLoop(ctx context.Context) {
 				continue
 			}
 
+			if len(result[1]) > maxMessageSize {
+				m.log.Error("task message too large, dropping",
+					"size", len(result[1]), "max", maxMessageSize)
+
+				continue
+			}
+
 			var task model.Task
 
 			err = json.Unmarshal([]byte(result[1]), &task)
@@ -192,6 +201,13 @@ func (m *Manager) reportLoop(ctx context.Context) {
 			}
 
 			if len(result) < 2 {
+				continue
+			}
+
+			if len(result[1]) > maxMessageSize {
+				m.log.Error("report message too large, dropping",
+					"size", len(result[1]), "max", maxMessageSize)
+
 				continue
 			}
 
