@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os/signal"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -80,12 +78,11 @@ const drainTimeout = 5 * time.Second
 // Run starts the manager main loop with graceful two-phase shutdown.
 // Phase 1: on signal, stop accepting new tasks and sync loop.
 // Phase 2: drain remaining worker reports within drainTimeout, then exit.
+// The caller is expected to pass a signal-aware context (e.g. from
+// signal.NotifyContext) so that shutdown is triggered on SIGTERM/SIGINT.
 //
 //nolint:contextcheck // drainCtx intentionally uses background context to outlive signal cancellation.
 func (m *Manager) Run(ctx context.Context) {
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
 	m.log.Info("manager started")
 
 	var wgr sync.WaitGroup

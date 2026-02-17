@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -31,6 +29,9 @@ const (
 	slotFailureKeyPrefix      = "monitor:slot_failures:"
 	containerRestartKeyPrefix = "monitor:restarts:"
 	counterTTL                = time.Hour
+	// maxHeartbeatSize limits heartbeat payloads to prevent OOM from
+	// oversized values written by malicious or buggy workers.
+	maxHeartbeatSize = 1 << 20 // 1 MiB.
 )
 
 // Config holds monitor settings.
@@ -71,11 +72,9 @@ func New(rdb *redis.Client, cfg Config, log *slog.Logger) *Monitor {
 	}
 }
 
-// Run starts the monitor loop with graceful shutdown on SIGTERM/SIGINT.
+// Run starts the monitor loop. The caller is expected to pass a
+// signal-aware context so that shutdown is triggered on SIGTERM/SIGINT.
 func (mon *Monitor) Run(ctx context.Context) {
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
 	mon.log.Info("monitor started", "interval", mon.cfg.CheckInterval)
 
 	ticker := time.NewTicker(mon.cfg.CheckInterval)
@@ -166,6 +165,13 @@ func (mon *Monitor) readHeartbeat(ctx context.Context, key string) *model.Heartb
 		} else {
 			mon.log.Error("failed to read heartbeat", "key", key, "error", err)
 		}
+
+		return nil
+	}
+
+	if len(val) > maxHeartbeatSize {
+		mon.log.Error("heartbeat payload too large, dropping",
+			"key", key, "size", len(val), "max", maxHeartbeatSize)
 
 		return nil
 	}

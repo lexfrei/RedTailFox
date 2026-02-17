@@ -53,6 +53,18 @@ func NewOCIRuntime(ctx context.Context, log *slog.Logger) (*OCIRuntime, error) {
 
 // Run creates and starts a new container.
 func (r *OCIRuntime) Run(ctx context.Context, opts *RunOptions) (Container, error) {
+	if opts == nil {
+		return Container{}, errors.New("run options must not be nil")
+	}
+
+	if opts.Image == "" {
+		return Container{}, errors.New("container image must not be empty")
+	}
+
+	if opts.Name == "" {
+		return Container{}, errors.New("container name must not be empty")
+	}
+
 	hostCfg := &apitypes.HostConfig{
 		RestartPolicy: apitypes.RestartPolicy{
 			Name: apitypes.RestartPolicyMode(opts.RestartPolicy),

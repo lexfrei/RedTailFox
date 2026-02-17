@@ -21,7 +21,10 @@ const (
 	// slot config does not specify a checkInterval. 900s (15 min) is the
 	// standard polling cadence for the upstream chat-bot use case.
 	defaultInterval = 900
-	stopTimeout     = 30 * time.Second
+	// maxInterval caps the check interval to prevent untrusted configs from
+	// disabling the slot's work loop indefinitely.
+	maxInterval = 86400 // 24 hours.
+	stopTimeout = 30 * time.Second
 )
 
 // SlotInfo provides read-only context about the slot to the work function.
@@ -225,9 +228,12 @@ func (s *Slot) tick(ctx context.Context, lastCheck *int64, checkInterval int64) 
 
 	s.SetStatus(model.SlotStatusReadPending)
 
+	// Copy config to prevent WorkFunc from mutating the slot's shared slice.
+	cfgCopy := append(json.RawMessage(nil), s.Config...)
+
 	info := SlotInfo{
 		ID:        s.ID,
-		Config:    s.Config,
+		Config:    cfgCopy,
 		SetStatus: s.SetStatus,
 	}
 
@@ -303,6 +309,13 @@ func extractCheckInterval(config json.RawMessage, log *slog.Logger) int64 {
 		log.Info("check interval not set in config, using default", "default", defaultInterval)
 
 		return defaultInterval
+	}
+
+	if interval > maxInterval {
+		log.Warn("check interval exceeds maximum, clamping",
+			"requested", interval, "max", maxInterval)
+
+		return maxInterval
 	}
 
 	return interval

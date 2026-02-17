@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os/signal"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -55,11 +53,9 @@ func New(rdb *redis.Client, containerName, commandChannel, reportsQueue string, 
 	}
 }
 
-// Run starts the worker's main loop with graceful shutdown on SIGTERM/SIGINT.
+// Run starts the worker's main loop. The caller is expected to pass a
+// signal-aware context so that shutdown is triggered on SIGTERM/SIGINT.
 func (w *Worker) Run(ctx context.Context) {
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
 	hbt := NewHeartbeat(w.rdb, w.containerName, w.slotList, w.log)
 
 	hbtDone := make(chan struct{})
@@ -135,6 +131,8 @@ func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int)
 
 	if !ok {
 		w.mu.Unlock()
+		// Send "stopped" even for non-existent slots so the manager
+		// always receives confirmation and can clean up its state.
 		w.sendReport(ctx, originalID, "stopped")
 
 		return
