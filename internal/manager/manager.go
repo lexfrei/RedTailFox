@@ -147,6 +147,10 @@ func (m *Manager) Run(ctx context.Context) {
 	// wgr.Wait() guarantees all three goroutines have exited before
 	// shutdownContainers runs, so no concurrent access to m.mu is possible
 	// from the loop goroutines during shutdown.
+	//
+	// NOTE on panic safety: all methods that lock m.mu use defer m.mu.Unlock(),
+	// so if a goroutine panics while holding the lock, Go's panic unwinding
+	// releases the mutex BEFORE recoverPanic catches the panic. No deadlock.
 	wgr.Wait()
 
 	m.shutdownContainers()
@@ -586,8 +590,7 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		return errors.Wrapf(err, "listing slots for container %s", containerName)
 	}
 
-	stopTimeout := containerStopTimeout
-	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
+	if err := m.runtime.Stop(ctx, containerName, containerStopTimeout); err != nil {
 		m.log.Error("failed to stop container", "container", containerName, "error", err)
 	}
 
@@ -884,8 +887,7 @@ func (m *Manager) cleanupVanishedContainer(ctx context.Context, containerName st
 }
 
 func (m *Manager) stopOrphanedContainer(ctx context.Context, containerName string) {
-	stopTimeout := containerStopTimeout
-	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
+	if err := m.runtime.Stop(ctx, containerName, containerStopTimeout); err != nil {
 		m.log.Error("failed to stop orphaned container", "container", containerName, "error", err)
 
 		return

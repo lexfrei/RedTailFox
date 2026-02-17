@@ -214,11 +214,18 @@ func (w *Worker) slotList() []*Slot {
 	return result
 }
 
+// slotShutdownTimeout is the per-slot timeout during worker shutdown.
+// Must be shorter than the container stop timeout (10s) to leave room
+// for sending final reports (shutdownDelay = 5s).
+const slotShutdownTimeout = 4 * time.Second
+
 // stopAllSlots gracefully terminates all active slots and sends "stopped"
-// reports. Reports use a detached context because the main context is already
-// cancelled at this point. If Redis is unreachable during shutdown, reports
-// are lost and the manager's Redis state retains the slots as "running" until
-// the syncLoop detects the vanished container on its next 30s cycle.
+// reports. Slots are stopped concurrently so total time equals the slowest
+// slot, not the sum. Reports use a detached context because the main context
+// is already cancelled at this point. If Redis is unreachable during shutdown,
+// reports are lost and the manager's Redis state retains the slots as
+// "running" until the syncLoop detects the vanished container on its next
+// 30s cycle.
 func (w *Worker) stopAllSlots() {
 	w.mu.Lock()
 	slots := make([]*Slot, 0, len(w.slots))
@@ -230,10 +237,22 @@ func (w *Worker) stopAllSlots() {
 	w.slots = make(map[string]*Slot)
 	w.mu.Unlock()
 
-	// Stop all slots first so their goroutines exit before we send reports.
+	// Stop all slots concurrently so total shutdown time equals the slowest
+	// slot, not the sum. Use a shorter timeout than the default to fit within
+	// the container stop timeout (10s) before Docker sends SIGKILL.
+	var wgr sync.WaitGroup
+
+	wgr.Add(len(slots))
+
 	for _, slot := range slots {
-		slot.Stop()
+		go func() {
+			defer wgr.Done()
+
+			slot.StopWithTimeout(slotShutdownTimeout)
+		}()
 	}
+
+	wgr.Wait()
 
 	// Use a detached context with timeout for final reports so they are not
 	// dropped when the main context is already cancelled.

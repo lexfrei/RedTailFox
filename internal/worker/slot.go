@@ -94,10 +94,16 @@ func (s *Slot) Start(ctx context.Context) {
 }
 
 // Stop gracefully terminates the slot's work loop and waits for it to finish.
-// If the work function does not exit within stopTimeout, Stop returns anyway
-// to prevent hanging the entire shutdown sequence.
-// Safe to call concurrently and before Start.
+// Uses the default stopTimeout. Safe to call concurrently and before Start.
 func (s *Slot) Stop() {
+	s.StopWithTimeout(stopTimeout)
+}
+
+// StopWithTimeout gracefully terminates the slot's work loop and waits up to
+// the given timeout for the goroutine to exit. If the work function does not
+// exit in time, StopWithTimeout returns anyway to prevent hanging the caller.
+// Safe to call concurrently and before Start.
+func (s *Slot) StopWithTimeout(timeout time.Duration) {
 	s.stopOnce.Do(func() {
 		s.mu.Lock()
 		started := s.started
@@ -112,7 +118,7 @@ func (s *Slot) Stop() {
 		}
 	})
 
-	timer := time.NewTimer(stopTimeout)
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
 	select {

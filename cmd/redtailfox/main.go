@@ -94,6 +94,8 @@ func runManager(ctx context.Context) error {
 		return errors.Wrap(err, "creating container runtime")
 	}
 
+	defer runtime.Close()
+
 	mgr := manager.New(rdb, runtime, manager.Config{
 		MaxSlotsPerContainer: cfg.MaxSlotsPerContainer,
 		ContainerNamePrefix:  cfg.ContainerNamePrefix,
@@ -191,6 +193,11 @@ func validateManagerConfig(cfg *config.Manager) error {
 		return errors.Wrapf(errdefs.ErrInvalidConfig,
 			"WORKER_CONTAINER_PREFIX %q contains invalid characters (must match [a-zA-Z0-9][a-zA-Z0-9_.-]*)",
 			cfg.ContainerNamePrefix)
+	}
+
+	if cfg.MaxContainers < 0 {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"MAX_CONTAINERS must be non-negative, got %d", cfg.MaxContainers)
 	}
 
 	if cfg.WorkerMemoryBytes < 0 {

@@ -88,6 +88,10 @@ func (m *mockRuntime) List(_ context.Context, namePrefix string) ([]container.Co
 	return result, nil
 }
 
+func (m *mockRuntime) Close() error {
+	return nil
+}
+
 // containerCount returns the number of containers safely.
 func (m *mockRuntime) containerCount() int {
 	m.mu.Lock()

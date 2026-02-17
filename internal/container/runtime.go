@@ -67,4 +67,7 @@ type Runtime interface {
 
 	// List returns all running containers whose name starts with the given prefix.
 	List(ctx context.Context, namePrefix string) ([]Container, error)
+
+	// Close releases resources held by the runtime client (e.g., HTTP connections).
+	Close() error
 }

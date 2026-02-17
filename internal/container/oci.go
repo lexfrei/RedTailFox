@@ -48,7 +48,14 @@ func NewOCIRuntime(ctx context.Context, log *slog.Logger) (*OCIRuntime, error) {
 		}
 	}
 
+	cli.Close()
+
 	return nil, errors.Wrap(err, "container runtime unavailable after retries")
+}
+
+// Close releases the underlying HTTP client resources.
+func (r *OCIRuntime) Close() error {
+	return errors.Wrap(r.cli.Close(), "closing runtime client")
 }
 
 // Run creates and starts a new container.

@@ -130,6 +130,16 @@ func TestValidateManagerConfig_InvalidContainerPrefix(t *testing.T) {
 	}
 }
 
+func TestValidateManagerConfig_NegativeMaxContainers(t *testing.T) {
+	cfg := validManagerCfg()
+	cfg.MaxContainers = -5
+
+	err := validateManagerConfig(&cfg)
+	if !errors.Is(err, errdefs.ErrInvalidConfig) {
+		t.Errorf("expected ErrInvalidConfig for negative max containers, got %v", err)
+	}
+}
+
 func TestValidateManagerConfig_NegativeMemoryBytes(t *testing.T) {
 	cfg := validManagerCfg()
 	cfg.WorkerMemoryBytes = -1
