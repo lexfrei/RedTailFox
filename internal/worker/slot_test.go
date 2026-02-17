@@ -14,6 +14,8 @@ import (
 	"github.com/Dark-F0X/RedTailFox/internal/worker"
 )
 
+const workFuncTimeout = 10 * time.Second
+
 func testLogger() *slog.Logger {
 	return slog.Default()
 }
@@ -83,14 +85,17 @@ func TestSlotStopIdempotent(t *testing.T) {
 }
 
 func TestSlotWorkFuncCalled(t *testing.T) {
-	var called atomic.Int32
+	called := make(chan struct{}, 1)
 
 	work := func(_ context.Context, info worker.SlotInfo) error {
 		if info.ID != 42 {
 			t.Errorf("expected slot ID 42, got %d", info.ID)
 		}
 
-		called.Add(1)
+		select {
+		case called <- struct{}{}:
+		default:
+		}
 
 		return nil
 	}
@@ -102,21 +107,22 @@ func TestSlotWorkFuncCalled(t *testing.T) {
 
 	defer slot.Stop()
 
-	// Give the slot a few ticks to call the work function.
-	time.Sleep(6 * time.Second)
-
-	if called.Load() == 0 {
-		t.Error("expected work function to be called at least once")
+	select {
+	case <-called:
+	case <-time.After(workFuncTimeout):
+		t.Fatal("timed out waiting for work function to be called")
 	}
 }
 
 func TestSlotWorkFuncError(t *testing.T) {
-	var callCount atomic.Int32
-
+	called := make(chan struct{}, 1)
 	errTest := errors.New("test error")
 
 	work := func(_ context.Context, _ worker.SlotInfo) error {
-		callCount.Add(1)
+		select {
+		case called <- struct{}{}:
+		default:
+		}
 
 		return errTest
 	}
@@ -127,11 +133,10 @@ func TestSlotWorkFuncError(t *testing.T) {
 
 	defer slot.Stop()
 
-	// Wait for at least one tick.
-	time.Sleep(6 * time.Second)
-
-	if callCount.Load() == 0 {
-		t.Error("expected work function to be called even on error")
+	select {
+	case <-called:
+	case <-time.After(workFuncTimeout):
+		t.Fatal("timed out waiting for work function to be called")
 	}
 
 	// After error, slot should still be running (backoff, not crash).
@@ -141,12 +146,14 @@ func TestSlotWorkFuncError(t *testing.T) {
 }
 
 func TestSlotWorkFuncReceivesConfig(t *testing.T) {
-	expectedCfg := `{"bot":{"checkInterval":1,"key":"value"}}`
-
-	var receivedCfg json.RawMessage
+	expectedCfg := `{"bot":{"checkInterval":0,"key":"value"}}`
+	received := make(chan json.RawMessage, 1)
 
 	work := func(_ context.Context, info worker.SlotInfo) error {
-		receivedCfg = info.Config
+		select {
+		case received <- info.Config:
+		default:
+		}
 
 		return nil
 	}
@@ -156,16 +163,27 @@ func TestSlotWorkFuncReceivesConfig(t *testing.T) {
 
 	defer slot.Stop()
 
-	time.Sleep(6 * time.Second)
-
-	if string(receivedCfg) != expectedCfg {
-		t.Errorf("expected config %s, got %s", expectedCfg, string(receivedCfg))
+	select {
+	case cfg := <-received:
+		if string(cfg) != expectedCfg {
+			t.Errorf("expected config %s, got %s", expectedCfg, string(cfg))
+		}
+	case <-time.After(workFuncTimeout):
+		t.Fatal("timed out waiting for work function to receive config")
 	}
 }
 
 func TestSlotWorkFuncCanSetStatus(t *testing.T) {
+	var callCount atomic.Int32
+
+	done := make(chan struct{})
+
 	work := func(_ context.Context, info worker.SlotInfo) error {
 		info.SetStatus(model.SlotStatusDirectCheck)
+
+		if callCount.Add(1) == 1 {
+			close(done)
+		}
 
 		return nil
 	}
@@ -176,12 +194,31 @@ func TestSlotWorkFuncCanSetStatus(t *testing.T) {
 
 	defer slot.Stop()
 
-	// Wait for work function to execute and set status.
-	time.Sleep(6 * time.Second)
+	select {
+	case <-done:
+	case <-time.After(workFuncTimeout):
+		t.Fatal("timed out waiting for work function to execute")
+	}
+
+	// Give tick() a moment to reset status to idle after work returns.
+	time.Sleep(50 * time.Millisecond)
 
 	// After work completes, slot should be back to idle.
 	snap := slot.Snapshot()
 	if snap.Status != string(model.SlotStatusIdle) {
 		t.Errorf("expected idle after work, got %s", snap.Status)
+	}
+}
+
+func TestSlotRunningFalseAfterRunExits(t *testing.T) {
+	slot := worker.NewSlot(1, json.RawMessage(`{}`), nil, testLogger())
+	slot.Start(context.Background())
+
+	time.Sleep(50 * time.Millisecond)
+
+	slot.Stop()
+
+	if slot.IsRunning() {
+		t.Error("expected running=false after run exits")
 	}
 }

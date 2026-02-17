@@ -143,6 +143,12 @@ func (s *Slot) closeDone() {
 func (s *Slot) run(parent context.Context) {
 	defer s.closeDone()
 
+	defer func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}()
+
 	checkInterval := extractCheckInterval(s.Config, s.log)
 	lastCheck := int64(0)
 	ticker := time.NewTicker(tickInterval)

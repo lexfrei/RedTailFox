@@ -71,17 +71,12 @@ func TestLoadManagerFromEnv_CustomValues(t *testing.T) {
 
 func TestLoadWorkerFromEnv_Defaults(t *testing.T) {
 	t.Setenv("COMMAND_CHANNEL", "")
-	t.Setenv("EVENT_CHANNEL", "")
 	t.Setenv("CONTAINER_NAME", "")
 
 	cfg := config.LoadWorkerFromEnv()
 
 	if cfg.CommandChannel != "worker_commands" {
 		t.Errorf("expected default command channel, got %s", cfg.CommandChannel)
-	}
-
-	if cfg.EventChannel != "events" {
-		t.Errorf("expected default event channel, got %s", cfg.EventChannel)
 	}
 
 	if cfg.ContainerName != "unknown_container" {

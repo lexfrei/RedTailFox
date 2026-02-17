@@ -32,3 +32,9 @@ var (
 	// ErrUnknownCommand indicates an unrecognized task command.
 	ErrUnknownCommand = errors.New("unknown command")
 )
+
+// Sentinel errors for configuration validation.
+var (
+	// ErrInvalidConfig indicates a configuration value is invalid.
+	ErrInvalidConfig = errors.New("invalid configuration")
+)

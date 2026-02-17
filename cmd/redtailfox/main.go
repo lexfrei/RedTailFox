@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/cockroachdb/errors"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Dark-F0X/RedTailFox/internal/config"
 	"github.com/Dark-F0X/RedTailFox/internal/container"
+	"github.com/Dark-F0X/RedTailFox/internal/errdefs"
 	"github.com/Dark-F0X/RedTailFox/internal/manager"
 	"github.com/Dark-F0X/RedTailFox/internal/monitor"
 	"github.com/Dark-F0X/RedTailFox/internal/worker"
@@ -28,41 +30,49 @@ func main() {
 
 	ctx := context.Background()
 
+	var err error
+
 	switch os.Args[1] {
 	case "manager":
-		runManager(ctx)
+		err = runManager(ctx)
 	case "worker":
-		runWorker(ctx)
+		err = runWorker(ctx)
 	case "monitor":
-		runMonitor(ctx)
+		err = runMonitor(ctx)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		os.Exit(1)
 	}
-}
 
-func pingRedis(ctx context.Context, rdb *redis.Client) {
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		slog.Error("failed to connect to Redis", "error", err)
+	if err != nil {
+		slog.Error("fatal error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func runManager(ctx context.Context) {
+func pingRedis(ctx context.Context, rdb *redis.Client) error {
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return errors.Wrap(err, "connecting to Redis")
+	}
+
+	return nil
+}
+
+func runManager(ctx context.Context) error {
 	cfg := config.LoadManagerFromEnv()
 
 	if cfg.MaxSlotsPerContainer <= 0 {
-		slog.Error("MAX_SLOTS_PER_CONTAINER must be positive", "value", cfg.MaxSlotsPerContainer)
-		os.Exit(1)
+		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
 	}
 
 	rdb := redis.NewClient(cfg.Redis.Options())
-	pingRedis(ctx, rdb)
+	if err := pingRedis(ctx, rdb); err != nil {
+		return err
+	}
 
 	runtime, err := container.NewOCIRuntime(ctx, slog.Default())
 	if err != nil {
-		slog.Error("failed to create container runtime", "error", err)
-		os.Exit(1)
+		return errors.Wrap(err, "creating container runtime")
 	}
 
 	mgr := manager.New(rdb, runtime, manager.Config{
@@ -76,26 +86,35 @@ func runManager(ctx context.Context) {
 		RedisHost:            cfg.Redis.Host,
 		RedisPort:            cfg.Redis.Port,
 		RedisPassword:        cfg.Redis.Password,
-		EventChannel:         "",
 		WorkerNetwork:        cfg.WorkerNetwork,
 	})
 
 	mgr.Run(ctx)
+
+	return nil
 }
 
-func runWorker(ctx context.Context) {
+func runWorker(ctx context.Context) error {
 	cfg := config.LoadWorkerFromEnv()
 	rdb := redis.NewClient(cfg.Redis.Options())
-	pingRedis(ctx, rdb)
+
+	if err := pingRedis(ctx, rdb); err != nil {
+		return err
+	}
 
 	wrk := worker.New(rdb, cfg.ContainerName, cfg.CommandChannel, cfg.ReportsQueue, nil, slog.Default())
 	wrk.Run(ctx)
+
+	return nil
 }
 
-func runMonitor(ctx context.Context) {
+func runMonitor(ctx context.Context) error {
 	cfg := config.LoadMonitorFromEnv()
 	rdb := redis.NewClient(cfg.Redis.Options())
-	pingRedis(ctx, rdb)
+
+	if err := pingRedis(ctx, rdb); err != nil {
+		return err
+	}
 
 	mon := monitor.New(rdb, monitor.Config{
 		MaxSilenceSeconds: cfg.MaxSilenceSeconds,
@@ -105,4 +124,6 @@ func runMonitor(ctx context.Context) {
 	}, slog.Default())
 
 	mon.Run(ctx)
+
+	return nil
 }

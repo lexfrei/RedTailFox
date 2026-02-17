@@ -8,8 +8,6 @@ import (
 	"github.com/cockroachdb/errors"
 	apitypes "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
-
-	rtferrors "github.com/Dark-F0X/RedTailFox/internal/errdefs"
 )
 
 // OCIRuntime implements Runtime using an OCI-compatible container engine.
@@ -18,19 +16,39 @@ type OCIRuntime struct {
 	log *slog.Logger
 }
 
+const (
+	runtimeRetries    = 5
+	runtimeRetryDelay = 3 * time.Second
+)
+
 // NewOCIRuntime creates a new OCI runtime using the default environment connection.
-// It validates the connection by pinging the daemon before returning.
+// It validates the connection by pinging the daemon with retries so that the
+// manager survives a slow-starting container runtime.
 func NewOCIRuntime(ctx context.Context, log *slog.Logger) (*OCIRuntime, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, errors.Wrap(err, "connecting to container runtime")
 	}
 
-	if _, err := cli.ServerVersion(ctx, client.ServerVersionOptions{}); err != nil {
-		return nil, errors.Wrap(err, "verifying container runtime connection")
+	for attempt := range runtimeRetries {
+		if _, err = cli.ServerVersion(ctx, client.ServerVersionOptions{}); err == nil {
+			return &OCIRuntime{cli: cli, log: log}, nil
+		}
+
+		log.Warn("container runtime not ready, retrying",
+			"attempt", attempt+1,
+			"maxRetries", runtimeRetries,
+			"error", err,
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil, errors.Wrap(ctx.Err(), "waiting for container runtime")
+		case <-time.After(runtimeRetryDelay):
+		}
 	}
 
-	return &OCIRuntime{cli: cli, log: log}, nil
+	return nil, errors.Wrap(err, "container runtime unavailable after retries")
 }
 
 // Run creates and starts a new container.
@@ -102,10 +120,6 @@ func (r *OCIRuntime) Remove(ctx context.Context, name string) error {
 
 // List returns running containers matching the given name prefix.
 func (r *OCIRuntime) List(ctx context.Context, namePrefix string) ([]Container, error) {
-	if r.cli == nil {
-		return nil, errors.Wrap(rtferrors.ErrRuntimeUnavailable, "listing containers")
-	}
-
 	filters := make(client.Filters)
 	filters.Add("name", namePrefix)
 

@@ -36,7 +36,6 @@ type Config struct {
 	RedisHost            string
 	RedisPort            string
 	RedisPassword        string
-	EventChannel         string
 	WorkerNetwork        string
 }
 
@@ -63,16 +62,27 @@ func New(rdb *redis.Client, runtime container.Runtime, cfg Config) *Manager {
 	}
 }
 
-// Run starts the manager main loop with graceful shutdown.
+// drainTimeout is how long the report loop continues after the main context is
+// cancelled, giving in-flight worker reports a chance to be processed.
+const drainTimeout = 5 * time.Second
+
+// Run starts the manager main loop with graceful two-phase shutdown.
+// Phase 1: on signal, stop accepting new tasks and sync loop.
+// Phase 2: drain remaining worker reports within drainTimeout, then exit.
+//
+//nolint:contextcheck // drainCtx intentionally uses background context to outlive signal cancellation.
 func (m *Manager) Run(ctx context.Context) {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	m.log.Info("manager started")
 
+	// drainCtx keeps the report loop alive after the main context is cancelled.
+	drainCtx, drainCancel := context.WithCancel(context.Background())
+
 	var wgr sync.WaitGroup
 
-	const goroutines = 3 // task loop, report listener, sync loop.
+	const goroutines = 3
 
 	wgr.Add(goroutines)
 
@@ -85,14 +95,22 @@ func (m *Manager) Run(ctx context.Context) {
 	go func() {
 		defer wgr.Done()
 
-		m.reportLoop(ctx)
+		m.syncLoop(ctx)
 	}()
 
 	go func() {
 		defer wgr.Done()
 
-		m.syncLoop(ctx)
+		// Report loop uses drainCtx so it can outlive the main context.
+		m.reportLoop(drainCtx)
 	}()
+
+	// Wait for main context cancellation (signal received).
+	<-ctx.Done()
+	m.log.Warn("shutting down, draining reports")
+
+	// Allow drainTimeout for remaining reports, then stop.
+	time.AfterFunc(drainTimeout, drainCancel)
 
 	wgr.Wait()
 
@@ -315,7 +333,7 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 	}
 
 	if err := m.state.SetContainerChannel(ctx, containerName, channel); err != nil {
-		m.log.Error("failed to store container channel", "container", containerName, "error", err)
+		return "", errors.Wrap(err, "storing container channel")
 	}
 
 	return containerName, nil
@@ -327,7 +345,6 @@ func (m *Manager) buildContainerEnv(idx int64, name, channel string) map[string]
 		"REDIS_PORT":             m.cfg.RedisPort,
 		"REDIS_PASSWORD":         m.cfg.RedisPassword,
 		"COMMAND_CHANNEL":        channel,
-		"EVENT_CHANNEL":          m.cfg.EventChannel,
 		"WORKER_REPORTS_CHANNEL": m.cfg.ReportsQueue,
 		"CONTAINER_INDEX":        strconv.FormatInt(idx, 10),
 		"CONTAINER_NAME":         name,
@@ -442,7 +459,13 @@ func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerRep
 func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) {
 	containerName, err := m.state.UnregisterSlot(ctx, report.SlotID)
 	if err != nil {
-		m.log.Warn("could not unregister slot", "slotID", report.SlotID)
+		if !errors.Is(err, errdefs.ErrSlotNotFound) {
+			m.log.Error("failed to unregister slot", "slotID", report.SlotID, "error", err)
+
+			return
+		}
+
+		m.log.Warn("slot not found during unregister", "slotID", report.SlotID)
 	}
 
 	m.publishDBWrite(ctx, report.SlotID, report.Status, "worker", report.ErrorText)

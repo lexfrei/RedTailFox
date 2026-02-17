@@ -21,6 +21,9 @@ FROM scratch
 WORKDIR /
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /workspace/redtailfox .
+# Default to non-root. The manager service overrides this to root via
+# compose.yaml "user: 0:0" because it needs access to the container
+# runtime socket for spawning worker containers.
 USER 65532:65532
 
 ENTRYPOINT ["/redtailfox"]

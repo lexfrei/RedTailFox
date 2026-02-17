@@ -43,7 +43,6 @@ type Manager struct {
 type Worker struct {
 	Redis          Redis
 	CommandChannel string
-	EventChannel   string
 	ContainerName  string
 	ReportsQueue   string
 }
@@ -87,7 +86,6 @@ func LoadWorkerFromEnv() Worker {
 	return Worker{
 		Redis:          loadRedis(),
 		CommandChannel: envOrDefault("COMMAND_CHANNEL", "worker_commands"),
-		EventChannel:   envOrDefault("EVENT_CHANNEL", "events"),
 		ContainerName:  envOrDefault("CONTAINER_NAME", "unknown_container"),
 		ReportsQueue:   envOrDefault("WORKER_REPORTS_CHANNEL", "worker_reports"),
 	}
