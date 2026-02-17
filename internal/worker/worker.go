@@ -138,10 +138,16 @@ func (w *Worker) handleStop(ctx context.Context, slotKey string, originalID int)
 		return
 	}
 
-	delete(w.slots, slotKey)
+	// Release the lock before Stop() so heartbeats still include this
+	// slot while it is shutting down. Delete after Stop() completes.
 	w.mu.Unlock()
 
 	slot.Stop()
+
+	w.mu.Lock()
+	delete(w.slots, slotKey)
+	w.mu.Unlock()
+
 	w.sendReport(ctx, slot.ID, "stopped")
 }
 
@@ -168,36 +174,31 @@ func (w *Worker) sendReport(ctx context.Context, slotID int, status string) {
 
 func (w *Worker) commandLoop(ctx context.Context) {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			result, err := w.rdb.BRPop(ctx, commandTimeout, w.commandCh).Result()
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return
-				}
+		result, err := w.rdb.BRPop(ctx, commandTimeout, w.commandCh).Result()
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
 
-				if errors.Is(err, redis.Nil) {
-					continue
-				}
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
 
-				w.log.Error("command listener error", "error", err)
-				time.Sleep(2 * time.Second)
+			w.log.Error("command listener error", "error", err)
+			time.Sleep(2 * time.Second)
+
+			continue
+		}
+
+		if len(result) >= 2 {
+			if len(result[1]) > maxCommandSize {
+				w.log.Error("command message too large, dropping",
+					"size", len(result[1]), "max", maxCommandSize)
 
 				continue
 			}
 
-			if len(result) >= 2 {
-				if len(result[1]) > maxCommandSize {
-					w.log.Error("command message too large, dropping",
-						"size", len(result[1]), "max", maxCommandSize)
-
-					continue
-				}
-
-				w.HandleCommand(ctx, []byte(result[1]))
-			}
+			w.HandleCommand(ctx, []byte(result[1]))
 		}
 	}
 }
@@ -214,6 +215,11 @@ func (w *Worker) slotList() []*Slot {
 	return result
 }
 
+// stopAllSlots gracefully terminates all active slots and sends "stopped"
+// reports. Reports use a detached context because the main context is already
+// cancelled at this point. If Redis is unreachable during shutdown, reports
+// are lost and the manager's Redis state retains the slots as "running" until
+// the syncLoop detects the vanished container on its next 30s cycle.
 func (w *Worker) stopAllSlots() {
 	w.mu.Lock()
 	slots := make([]*Slot, 0, len(w.slots))

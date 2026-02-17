@@ -284,7 +284,7 @@ func (mon *Monitor) checkSlots(ctx context.Context, containerName string, slots 
 		}
 
 		// Slot is healthy — reset its failure counter.
-		mon.resetCounters(ctx, slotFailureRedisKey(containerName, slot.SlotID))
+		mon.resetCounters(ctx, slotFailureRedisKey(slot.SlotID))
 	}
 }
 
@@ -294,7 +294,7 @@ func (mon *Monitor) handleUnhealthySlot(
 	slotID int,
 	reason string,
 ) {
-	redisKey := slotFailureRedisKey(containerName, slotID)
+	redisKey := slotFailureRedisKey(slotID)
 
 	count, err := mon.incrCounter(ctx, redisKey)
 	if err != nil {
@@ -339,8 +339,11 @@ func (mon *Monitor) handleUnhealthySlot(
 }
 
 // slotFailureRedisKey returns the full Redis key for a slot failure counter.
-func slotFailureRedisKey(containerName string, slotID int) string {
-	return fmt.Sprintf("%s%s:%d", slotFailureKeyPrefix, containerName, slotID)
+// The key is based on slot ID only (not container name) so the failure count
+// persists when a failing slot is moved to a different container, preventing
+// infinite restart loops.
+func slotFailureRedisKey(slotID int) string {
+	return fmt.Sprintf("%s%d", slotFailureKeyPrefix, slotID)
 }
 
 func (mon *Monitor) checkMissingContainers(ctx context.Context, containers []string, seen map[string]bool) {

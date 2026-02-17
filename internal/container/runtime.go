@@ -37,6 +37,14 @@ type RunOptions struct {
 
 	// Binds is a list of host:container bind mounts (e.g., "/host/path:/container/path:ro").
 	Binds []string
+
+	// MemoryBytes limits the container's memory usage in bytes.
+	// Zero means no limit (not recommended for untrusted workloads).
+	MemoryBytes int64
+
+	// PidsLimit limits the number of processes in the container.
+	// Zero means no limit. Set to prevent fork bombs.
+	PidsLimit int64
 }
 
 // Runtime defines operations for managing OCI-compatible containers.

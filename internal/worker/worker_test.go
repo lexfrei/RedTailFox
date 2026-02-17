@@ -184,6 +184,36 @@ func TestHandleCommandInvalidJSON(t *testing.T) {
 	wrk.HandleCommand(ctx, []byte(`{invalid`))
 }
 
+func TestHandleCommandInvalidSlotID(t *testing.T) {
+	srv, wrk := setupWorker(t)
+	ctx := context.Background()
+
+	for _, slotID := range []int{0, -1, -100} {
+		task := model.Task{
+			Command: model.CommandStart,
+			SlotID:  slotID,
+			Config:  json.RawMessage(`{}`),
+		}
+
+		raw, err := json.Marshal(task)
+		if err != nil {
+			t.Fatalf("failed to marshal task: %v", err)
+		}
+
+		wrk.HandleCommand(ctx, raw)
+	}
+
+	// No reports should be generated for invalid slot IDs.
+	reports, err := srv.List("worker_reports")
+	if err != nil && reports != nil {
+		t.Fatalf("failed to read reports: %v", err)
+	}
+
+	if len(reports) != 0 {
+		t.Errorf("expected 0 reports for invalid slot IDs, got %d", len(reports))
+	}
+}
+
 func TestReportContainsContainerName(t *testing.T) {
 	srv, wrk := setupWorker(t)
 	ctx := context.Background()

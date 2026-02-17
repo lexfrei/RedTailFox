@@ -72,6 +72,14 @@ func (r *OCIRuntime) Run(ctx context.Context, opts *RunOptions) (Container, erro
 		Binds: opts.Binds,
 	}
 
+	if opts.MemoryBytes > 0 {
+		hostCfg.Memory = opts.MemoryBytes
+	}
+
+	if opts.PidsLimit > 0 {
+		hostCfg.PidsLimit = &opts.PidsLimit
+	}
+
 	if opts.Network != "" {
 		hostCfg.NetworkMode = apitypes.NetworkMode(opts.Network)
 	}

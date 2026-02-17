@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,12 @@ type Config struct {
 	// password. When set, the file is bind-mounted into worker containers
 	// and REDIS_PASSWORD_FILE is used instead of REDIS_PASSWORD.
 	RedisPasswordFile string
+	// WorkerMemoryBytes is the memory limit for spawned worker containers.
+	// Zero means no limit.
+	WorkerMemoryBytes int64
+	// WorkerPidsLimit is the PID limit for spawned worker containers.
+	// Zero means no limit.
+	WorkerPidsLimit int64
 }
 
 // Manager orchestrates container lifecycle and slot distribution.
@@ -89,6 +96,11 @@ const drainTimeout = 5 * time.Second
 func (m *Manager) Run(ctx context.Context) {
 	m.log.Info("manager started")
 
+	// Derive a cancellable context so that a panic in any goroutine triggers
+	// shutdown of all loops instead of leaving the manager partially alive.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var wgr sync.WaitGroup
 
 	const goroutines = 3
@@ -97,21 +109,21 @@ func (m *Manager) Run(ctx context.Context) {
 
 	go func() {
 		defer wgr.Done()
-		defer m.recoverPanic("taskLoop")
+		defer m.recoverPanic("taskLoop", cancel)
 
 		m.taskLoop(ctx)
 	}()
 
 	go func() {
 		defer wgr.Done()
-		defer m.recoverPanic("syncLoop")
+		defer m.recoverPanic("syncLoop", cancel)
 
 		m.syncLoop(ctx)
 	}()
 
 	go func() {
 		defer wgr.Done()
-		defer m.recoverPanic("reportLoop")
+		defer m.recoverPanic("reportLoop", cancel)
 
 		// Run report loop on main ctx, then drain remaining reports
 		// with a bounded timeout so we never hang on shutdown.
@@ -134,110 +146,102 @@ func (m *Manager) Run(ctx context.Context) {
 	m.log.Warn("manager stopped")
 }
 
-// recoverPanic logs panics from manager goroutines so that a single
-// crashing loop does not take down the entire process.
-func (m *Manager) recoverPanic(loop string) {
+// recoverPanic logs panics from manager goroutines and cancels the shared
+// context so all loops shut down. Without this, a single panicking goroutine
+// would leave the manager running in a degraded state.
+func (m *Manager) recoverPanic(loop string, cancel context.CancelFunc) {
 	if rec := recover(); rec != nil {
-		m.log.Error("panic in manager goroutine",
+		m.log.Error("panic in manager goroutine, shutting down",
 			"loop", loop, "panic", rec)
+		cancel()
 	}
 }
 
 func (m *Manager) taskLoop(ctx context.Context) {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.TasksQueue).Result()
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return
-				}
+		result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.TasksQueue).Result()
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
 
-				// BRPop normally returns context errors on timeout, but some
-				// Redis client versions may return redis.Nil instead.
-				if errors.Is(err, redis.Nil) {
-					continue
-				}
-
-				m.log.Error("task listener error", "error", err)
-				time.Sleep(2 * time.Second)
-
+			// BRPop normally returns context errors on timeout, but some
+			// Redis client versions may return redis.Nil instead.
+			if errors.Is(err, redis.Nil) {
 				continue
 			}
 
-			if len(result) < 2 {
-				continue
-			}
+			m.log.Error("task listener error", "error", err)
+			time.Sleep(2 * time.Second)
 
-			if len(result[1]) > maxMessageSize {
-				m.log.Error("task message too large, dropping",
-					"size", len(result[1]), "max", maxMessageSize)
+			continue
+		}
 
-				continue
-			}
+		if len(result) < 2 {
+			continue
+		}
 
-			var task model.Task
+		if len(result[1]) > maxMessageSize {
+			m.log.Error("task message too large, dropping",
+				"size", len(result[1]), "max", maxMessageSize)
 
-			err = json.Unmarshal([]byte(result[1]), &task)
-			if err != nil {
-				m.log.Error("failed to parse task", "error", err)
+			continue
+		}
 
-				continue
-			}
+		var task model.Task
 
-			if err := m.HandleTask(ctx, task); err != nil {
-				m.log.Error("failed to handle task", "error", err)
-			}
+		err = json.Unmarshal([]byte(result[1]), &task)
+		if err != nil {
+			m.log.Error("failed to parse task", "error", err)
+
+			continue
+		}
+
+		if err := m.HandleTask(ctx, task); err != nil {
+			m.log.Error("failed to handle task", "error", err)
 		}
 	}
 }
 
 func (m *Manager) reportLoop(ctx context.Context) {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.ReportsQueue).Result()
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return
-				}
+		result, err := m.rdb.BRPop(ctx, popTimeout, m.cfg.ReportsQueue).Result()
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
 
-				if errors.Is(err, redis.Nil) {
-					continue
-				}
-
-				m.log.Error("report listener error", "error", err)
-				time.Sleep(2 * time.Second)
-
+			if errors.Is(err, redis.Nil) {
 				continue
 			}
 
-			if len(result) < 2 {
-				continue
-			}
+			m.log.Error("report listener error", "error", err)
+			time.Sleep(2 * time.Second)
 
-			if len(result[1]) > maxMessageSize {
-				m.log.Error("report message too large, dropping",
-					"size", len(result[1]), "max", maxMessageSize)
-
-				continue
-			}
-
-			var report model.WorkerReport
-
-			err = json.Unmarshal([]byte(result[1]), &report)
-			if err != nil {
-				m.log.Error("failed to parse report", "error", err)
-
-				continue
-			}
-
-			m.HandleWorkerReport(ctx, report)
+			continue
 		}
+
+		if len(result) < 2 {
+			continue
+		}
+
+		if len(result[1]) > maxMessageSize {
+			m.log.Error("report message too large, dropping",
+				"size", len(result[1]), "max", maxMessageSize)
+
+			continue
+		}
+
+		var report model.WorkerReport
+
+		err = json.Unmarshal([]byte(result[1]), &report)
+		if err != nil {
+			m.log.Error("failed to parse report", "error", err)
+
+			continue
+		}
+
+		m.HandleWorkerReport(ctx, report)
 	}
 }
 
@@ -422,6 +426,8 @@ func (m *Manager) startNewContainer(ctx context.Context, slotID int) (string, er
 		RestartPolicy: "unless-stopped",
 		Env:           m.buildContainerEnv(idx, containerName, channel),
 		Network:       m.cfg.WorkerNetwork,
+		MemoryBytes:   m.cfg.WorkerMemoryBytes,
+		PidsLimit:     m.cfg.WorkerPidsLimit,
 	}
 
 	if m.cfg.RedisPasswordFile != "" {
@@ -531,6 +537,15 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 		return errors.Wrap(errdefs.ErrContainerNotFound, "empty container name in restart task")
 	}
 
+	// Validate the container name belongs to this manager's namespace to
+	// prevent a malicious or buggy Redis message from targeting arbitrary
+	// containers (e.g., "redis", "socket-proxy").
+	if !strings.HasPrefix(containerName, m.cfg.ContainerNamePrefix+"_") {
+		return errors.Wrapf(errdefs.ErrInvalidConfig,
+			"container name %q does not match expected prefix %q",
+			containerName, m.cfg.ContainerNamePrefix)
+	}
+
 	m.log.Error("full container restart", "container", containerName)
 
 	slots, err := m.state.ContainerSlots(ctx, containerName)
@@ -586,29 +601,44 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 }
 
 // HandleWorkerReport processes status reports from workers.
+// Container cleanup (Stop/Remove) runs outside the mutex so the task loop
+// and sync loop remain responsive during the potentially slow runtime calls.
 func (m *Manager) HandleWorkerReport(ctx context.Context, report model.WorkerReport) {
+	emptyContainer := m.processReport(ctx, report)
+	if emptyContainer != "" {
+		m.cleanupEmptyContainer(ctx, emptyContainer)
+	}
+}
+
+// processReport handles a single worker report under the mutex and returns the
+// name of a container that became empty and should be cleaned up, or empty
+// string if no cleanup is needed.
+func (m *Manager) processReport(ctx context.Context, report model.WorkerReport) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	switch report.Status {
 	case "stopped", "error":
-		m.handleSlotStopped(ctx, report)
+		return m.handleSlotStopped(ctx, report)
 	case "started":
 		m.publishDBWrite(ctx, report.SlotID, "run_worker", "manager", "")
 	default:
 		m.log.Warn("unknown report status", "status", report.Status)
 	}
+
+	return ""
 }
 
 // handleSlotStopped processes a stopped/error report. Caller must hold m.mu.
-func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) {
+// Returns the container name if it became empty and should be cleaned up.
+func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerReport) string {
 	// Reject reports without ContainerName — all legitimate workers always
 	// include it. An empty name would bypass the stale report check below.
 	if report.ContainerName == "" {
 		m.log.Warn("ignoring report without container name",
 			"slotID", report.SlotID, "status", report.Status)
 
-		return
+		return ""
 	}
 
 	// Guard against stale reports from a dying worker: if the slot was
@@ -622,7 +652,7 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 		m.log.Error("failed to verify slot container for report, skipping",
 			"slotID", report.SlotID, "error", err)
 
-		return
+		return ""
 	}
 
 	if err == nil && currentContainer != report.ContainerName {
@@ -632,7 +662,7 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 			"currentContainer", currentContainer,
 		)
 
-		return
+		return ""
 	}
 
 	containerName, err := m.state.UnregisterSlot(ctx, report.SlotID)
@@ -640,7 +670,7 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 		if !errors.Is(err, errdefs.ErrSlotNotFound) {
 			m.log.Error("failed to unregister slot", "slotID", report.SlotID, "error", err)
 
-			return
+			return ""
 		}
 
 		// Slot was already unregistered (e.g., by handleRestartContainer).
@@ -652,42 +682,45 @@ func (m *Manager) handleSlotStopped(ctx context.Context, report model.WorkerRepo
 	m.publishDBWrite(ctx, report.SlotID, report.Status, "worker", report.ErrorText)
 
 	if containerName == "" {
-		return
+		return ""
 	}
 
 	count, err := m.state.ContainerSlotCount(ctx, containerName)
 	if err != nil {
 		m.log.Error("failed to count container slots", "container", containerName, "error", err)
 
-		return
+		return ""
 	}
 
 	if count > 0 {
-		return
+		return ""
 	}
 
-	// NOTE: Stop+Remove execute while holding m.mu. This blocks all other
-	// manager operations for up to containerStopTimeout. An async cleanup
-	// queue would reduce contention but adds complexity; the current approach
-	// is acceptable because empty-container cleanup is infrequent.
+	// Remove container from Redis active set under the lock so that
+	// PickContainer will not assign new slots to it while we release
+	// the mutex and perform the slow runtime.Stop/Remove calls.
+	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
+		m.log.Error("failed to remove container state", "container", containerName, "error", err)
+
+		return ""
+	}
+
+	return containerName
+}
+
+// cleanupEmptyContainer stops and removes a container that has no slots.
+// Called without holding m.mu so the manager remains responsive.
+func (m *Manager) cleanupEmptyContainer(ctx context.Context, containerName string) {
 	m.log.Info("container empty, stopping", "container", containerName)
 
-	stopTimeout := containerStopTimeout
-	if err := m.runtime.Stop(ctx, containerName, stopTimeout); err != nil {
-		m.log.Error("failed to stop empty container, skipping removal", "container", containerName, "error", err)
+	if err := m.runtime.Stop(ctx, containerName, containerStopTimeout); err != nil {
+		m.log.Error("failed to stop empty container", "container", containerName, "error", err)
 
 		return
 	}
 
 	if err := m.runtime.Remove(ctx, containerName); err != nil {
 		m.log.Error("failed to remove empty container", "container", containerName, "error", err)
-	}
-
-	// Always clean up Redis state even if runtime.Remove failed — a stopped
-	// container lingering in the active set would let PickContainer send new
-	// slots to a dead container.
-	if err := m.state.RemoveContainer(ctx, containerName); err != nil {
-		m.log.Error("failed to remove container state", "container", containerName, "error", err)
 	}
 }
 

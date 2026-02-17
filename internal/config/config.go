@@ -76,6 +76,12 @@ type Manager struct {
 	// password. When set, worker containers receive a bind-mounted copy
 	// instead of a plaintext REDIS_PASSWORD environment variable.
 	RedisPasswordFile string
+	// WorkerMemoryBytes is the memory limit for spawned worker containers.
+	// Zero means no limit.
+	WorkerMemoryBytes int64
+	// WorkerPidsLimit is the PID limit for spawned worker containers.
+	// Zero means no limit.
+	WorkerPidsLimit int64
 }
 
 // Worker holds configuration for the worker component.
@@ -146,6 +152,16 @@ func LoadManagerFromEnv() (Manager, error) {
 		return Manager{}, err
 	}
 
+	workerMemory, err := envInt("WORKER_MEMORY_BYTES", 0)
+	if err != nil {
+		return Manager{}, err
+	}
+
+	workerPids, err := envInt("WORKER_PIDS_LIMIT", 0)
+	if err != nil {
+		return Manager{}, err
+	}
+
 	return Manager{
 		Redis:                redisCfg,
 		MaxSlotsPerContainer: maxSlots,
@@ -157,6 +173,8 @@ func LoadManagerFromEnv() (Manager, error) {
 		DBWriteQueue:         envOrDefault("DB_WRITE_QUEUE", "db_write_requests"),
 		WorkerNetwork:        envOrDefault("WORKER_NETWORK", ""),
 		RedisPasswordFile:    os.Getenv("REDIS_PASSWORD_FILE"),
+		WorkerMemoryBytes:    int64(workerMemory),
+		WorkerPidsLimit:      int64(workerPids),
 	}, nil
 }
 
