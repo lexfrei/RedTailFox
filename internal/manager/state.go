@@ -73,28 +73,38 @@ func (s *State) RegisterSlot(ctx context.Context, slotID int, containerName stri
 	return nil
 }
 
-// UnregisterSlot removes a slot from its container and returns the container name.
-// Returns ErrSlotNotFound when the slot does not exist, and propagates other
-// Redis errors without masking them.
+// unregisterSlotScript atomically looks up and removes a slot mapping.
+// Returns the container name if found, or empty string if not.
+// KEYS[1] = slot-to-container hash.
+// ARGV[1] = slot ID string, ARGV[2] = container info key prefix, ARGV[3] = slots suffix.
+//
+//nolint:gochecknoglobals // Pre-compiled Lua script for atomic slot unregistration.
+var unregisterSlotScript = redis.NewScript(`
+local containerName = redis.call('HGET', KEYS[1], ARGV[1])
+if not containerName then
+    return ''
+end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('SREM', ARGV[2] .. containerName .. ARGV[3], ARGV[1])
+return containerName
+`)
+
+// UnregisterSlot atomically removes a slot from its container and returns
+// the container name. Returns ErrSlotNotFound when the slot does not exist.
 func (s *State) UnregisterSlot(ctx context.Context, slotID int) (string, error) {
 	sid := strconv.Itoa(slotID)
 
-	containerName, err := s.rdb.HGet(ctx, slotToContainerKey, sid).Result()
+	containerName, err := unregisterSlotScript.Run(
+		ctx, s.rdb,
+		[]string{slotToContainerKey},
+		sid, containerInfoKeyPrefix, ":slots",
+	).Text()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return "", errors.Wrap(rtferrors.ErrSlotNotFound, "unregistering slot")
-		}
-
-		return "", errors.Wrap(err, "looking up slot container for unregister")
+		return "", errors.Wrap(err, "unregistering slot atomically")
 	}
 
-	pipe := s.rdb.TxPipeline()
-	pipe.HDel(ctx, slotToContainerKey, sid)
-	pipe.SRem(ctx, containerSlotsKey(containerName), sid)
-
-	_, err = pipe.Exec(ctx)
-	if err != nil {
-		return containerName, errors.Wrap(err, "cleaning up slot state")
+	if containerName == "" {
+		return "", errors.Wrap(rtferrors.ErrSlotNotFound, "unregistering slot")
 	}
 
 	return containerName, nil
@@ -139,6 +149,10 @@ return ''
 
 // PickContainer atomically finds a container with available slot capacity.
 // Returns empty string if all containers are full.
+//
+// NOTE: The Lua script builds keys dynamically from ARGV, which means it
+// accesses keys not declared in the KEYS array. This is incompatible with
+// Redis Cluster. RedTailFox is designed for single-node Redis only.
 func (s *State) PickContainer(ctx context.Context) (string, error) {
 	result, err := pickContainerScript.Run(
 		ctx, s.rdb,

@@ -65,6 +65,10 @@ func runManager(ctx context.Context) error {
 		return errors.Wrap(err, "validating redis config")
 	}
 
+	if cfg.WorkerImage == "" {
+		return errors.Wrap(errdefs.ErrInvalidConfig, "WORKER_IMAGE must not be empty")
+	}
+
 	if cfg.MaxSlotsPerContainer <= 0 {
 		return errors.Wrapf(errdefs.ErrInvalidConfig, "MAX_SLOTS_PER_CONTAINER must be positive, got %d", cfg.MaxSlotsPerContainer)
 	}

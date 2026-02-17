@@ -384,8 +384,7 @@ func (m *Manager) handleStop(ctx context.Context, task model.Task) error {
 			return errors.Wrap(err, "looking up slot for stop")
 		}
 
-		m.publishDBWrite(ctx, task.SlotID, "stop", "manager", "")
-		m.log.Warn("slot not found for stop, publishing status anyway", "slotID", task.SlotID)
+		m.log.Warn("slot not found for stop, ignoring", "slotID", task.SlotID)
 
 		return nil
 	}
@@ -484,6 +483,7 @@ func (m *Manager) handleRestartContainer(ctx context.Context, task model.Task) e
 			SlotID:  slotID,
 		}); err != nil {
 			m.log.Error("failed to restart slot", "slotID", slotID, "error", err)
+			m.publishDBWrite(ctx, slotID, "error", "monitor", fmt.Sprintf("restart_failed: %v", err))
 		}
 	}
 

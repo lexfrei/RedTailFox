@@ -4,9 +4,12 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/cockroachdb/errors"
 
 	"github.com/Dark-F0X/RedTailFox/internal/model"
 )
@@ -214,7 +217,7 @@ func (s *Slot) tick(ctx context.Context, lastCheck *int64, checkInterval int64) 
 		SetStatus: s.SetStatus,
 	}
 
-	err := s.work(ctx, info)
+	err := s.safeWork(ctx, info)
 	if err != nil {
 		s.SetStatus(model.SlotStatusErrorPending)
 		s.log.Error("slot work failed", "slotID", s.ID, "error", err)
@@ -230,6 +233,21 @@ func (s *Slot) tick(ctx context.Context, lastCheck *int64, checkInterval int64) 
 	*lastCheck = time.Now().Unix()
 
 	s.SetStatus(model.SlotStatusIdle)
+}
+
+// safeWork calls the work function with panic recovery so that a panicking
+// WorkFunc does not crash the entire worker process.
+func (s *Slot) safeWork(ctx context.Context, info SlotInfo) (err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = errors.Wrap(
+				fmt.Errorf("panic in WorkFunc: %v", rec), //nolint:err113 // Dynamic panic value.
+				"slot work panicked",
+			)
+		}
+	}()
+
+	return s.work(ctx, info)
 }
 
 func (s *Slot) backoff(ctx context.Context) {

@@ -170,12 +170,19 @@ func (mon *Monitor) isStaleHeartbeat(now, timestamp int64) bool {
 }
 
 func (mon *Monitor) handleStaleContainer(ctx context.Context, containerName string) {
+	mon.maybeRestartContainer(ctx, containerName, "stale heartbeat")
+}
+
+// maybeRestartContainer applies the failure counter + restart rate limit
+// and sends a restart_container task when thresholds are met.
+func (mon *Monitor) maybeRestartContainer(ctx context.Context, containerName, reason string) {
 	mon.failures[containerName]++
 	count := mon.failures[containerName]
 
 	if count < failureThreshold {
-		mon.log.Warn("stale heartbeat detected",
+		mon.log.Warn("container health check failed",
 			"container", containerName,
+			"reason", reason,
 			"failures", count,
 			"threshold", failureThreshold,
 		)
@@ -187,6 +194,7 @@ func (mon *Monitor) handleStaleContainer(ctx context.Context, containerName stri
 	if restarts >= maxContainerRestarts {
 		mon.log.Error("container exceeded max restart attempts, manual intervention needed",
 			"container", containerName,
+			"reason", reason,
 			"restarts", restarts,
 		)
 
@@ -195,8 +203,9 @@ func (mon *Monitor) handleStaleContainer(ctx context.Context, containerName stri
 
 	mon.containerRestarts[containerName]++
 
-	mon.log.Error("container heartbeat stale, restarting",
+	mon.log.Error("container unhealthy, restarting",
 		"container", containerName,
+		"reason", reason,
 		"failures", count,
 		"restartAttempt", restarts+1,
 	)
@@ -284,45 +293,7 @@ func (mon *Monitor) checkMissingContainers(ctx context.Context, seen map[string]
 			continue
 		}
 
-		// Apply the same failure counter as stale heartbeats to avoid restart
-		// storms for containers that just started and haven't published yet.
-		mon.failures[name]++
-		count := mon.failures[name]
-
-		if count < failureThreshold {
-			mon.log.Warn("container missing heartbeat",
-				"container", name,
-				"failures", count,
-				"threshold", failureThreshold,
-			)
-
-			continue
-		}
-
-		restarts := mon.containerRestarts[name]
-		if restarts >= maxContainerRestarts {
-			mon.log.Error("container exceeded max restart attempts, manual intervention needed",
-				"container", name,
-				"restarts", restarts,
-			)
-
-			continue
-		}
-
-		mon.containerRestarts[name]++
-
-		mon.log.Error("container missing heartbeat, restarting",
-			"container", name,
-			"restartAttempt", restarts+1,
-		)
-
-		mon.sendTask(ctx, &model.Task{
-			Command:       model.CommandRestartContainer,
-			ContainerName: name,
-			InitiatedBy:   "monitor",
-		})
-
-		delete(mon.failures, name)
+		mon.maybeRestartContainer(ctx, name, "missing heartbeat")
 	}
 
 	return active
